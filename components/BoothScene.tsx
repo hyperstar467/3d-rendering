@@ -2,11 +2,12 @@
 
 import { Component, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Canvas, type ThreeEvent, useThree } from "@react-three/fiber";
-import { ContactShadows, Html, OrbitControls, useGLTF } from "@react-three/drei";
+import { Edges, Html, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
-import type { BoothSettings, Fixture, FloorMaterial, ViewPreset } from "@/lib/types";
+import type { BoothSettings, Fixture, FloorMaterial, SurfaceTextureSettings, ViewPreset } from "@/lib/types";
 import { FixtureBox } from "@/components/FixtureBox";
-import { prepareModelToDimensions } from "@/lib/modelTransform";
+import { MeasuredGlb } from "@/components/MeasuredGlb";
+import { clippedUvProgramKey, clipOutsideTransformedUv, useMappedTexture } from "@/components/useMappedTexture";
 
 type Props = {
   booth: BoothSettings;
@@ -32,12 +33,12 @@ class ModelErrorBoundary extends Component<{ fallback: ReactNode; children: Reac
   }
 }
 
-function createFloorTexture(material: FloorMaterial, color: string) {
+function createFloorTexture(material: FloorMaterial) {
   const canvas = document.createElement("canvas");
   canvas.width = 512;
   canvas.height = 512;
   const context = canvas.getContext("2d")!;
-  context.fillStyle = color;
+  context.fillStyle = "#ffffff";
   context.fillRect(0, 0, canvas.width, canvas.height);
 
   if (material === "dark-carpet" || material === "light-carpet") {
@@ -90,16 +91,10 @@ function createFloorTexture(material: FloorMaterial, color: string) {
   return texture;
 }
 
-function configureTexture(
-  texture: THREE.Texture,
-  repeatX: number,
-  repeatY: number,
-  anisotropy: number,
-  fitToSurface = false,
-) {
+function configureFloorTexture(texture: THREE.Texture, repeatX: number, repeatY: number, anisotropy: number) {
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.wrapS = fitToSurface ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
-  texture.wrapT = fitToSurface ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
   texture.repeat.set(repeatX, repeatY);
   texture.anisotropy = anisotropy;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
@@ -109,16 +104,12 @@ function configureTexture(
   return texture;
 }
 
-function useSurfaceTexture({
-  image,
+function useFloorMaterialTexture({
   material,
-  color,
   repeatX,
   repeatY,
 }: {
-  image?: string;
-  material?: FloorMaterial;
-  color: string;
+  material: FloorMaterial;
   repeatX: number;
   repeatY: number;
 }) {
@@ -126,30 +117,13 @@ function useSurfaceTexture({
   const anisotropy = useThree((state) => state.gl.capabilities.getMaxAnisotropy());
 
   useEffect(() => {
-    let active = true;
-    let current: THREE.Texture | null = null;
-
-    if (image) {
-      new THREE.TextureLoader().load(image, (loaded) => {
-        if (!active) {
-          loaded.dispose();
-          return;
-        }
-        current = configureTexture(loaded, 1, 1, anisotropy, true);
-        setTexture(current);
-      });
-    } else if (material) {
-      current = configureTexture(createFloorTexture(material, color), repeatX, repeatY, anisotropy);
-      setTexture(current);
-    } else {
-      setTexture(null);
-    }
+    const current = configureFloorTexture(createFloorTexture(material), repeatX, repeatY, anisotropy);
+    setTexture(current);
 
     return () => {
-      active = false;
-      current?.dispose();
+      current.dispose();
     };
-  }, [anisotropy, color, image, material, repeatX, repeatY]);
+  }, [anisotropy, material, repeatX, repeatY]);
 
   return texture;
 }
@@ -222,27 +196,47 @@ function BoothGrid({ width, depth }: { width: number; depth: number }) {
   );
 }
 
-function WallPanel({
-  image,
+function SurfacePanel({
+  settings,
   color,
   width,
   height,
+  baseMap,
   position,
   rotation,
 }: {
-  image?: string;
+  settings: SurfaceTextureSettings;
   color: string;
   width: number;
   height: number;
+  baseMap?: THREE.Texture | null;
   position: [number, number, number];
   rotation?: [number, number, number];
 }) {
-  const texture = useSurfaceTexture({ image, color, repeatX: 1, repeatY: 1 });
+  const texture = useMappedTexture(settings.image, settings, width / Math.max(height, 0.001));
   return (
-    <mesh position={position} rotation={rotation} receiveShadow castShadow>
-      <planeGeometry args={[width, height]} />
-      <meshStandardMaterial color={texture ? "#ffffff" : color} map={texture ?? undefined} roughness={0.86} side={THREE.DoubleSide} />
-    </mesh>
+    <group position={position} rotation={rotation}>
+      <mesh receiveShadow castShadow>
+        <planeGeometry args={[width, height]} />
+        <meshStandardMaterial color={color} map={baseMap ?? undefined} roughness={0.86} side={THREE.DoubleSide} />
+      </mesh>
+      {texture && (
+        <mesh position-z={0.001} receiveShadow>
+          <planeGeometry args={[width, height]} />
+          <meshStandardMaterial
+            color="#ffffff"
+            map={texture}
+            roughness={0.82}
+            side={THREE.DoubleSide}
+            transparent
+            alphaTest={0.001}
+            depthWrite={false}
+            onBeforeCompile={clipOutsideTransformedUv}
+            customProgramCacheKey={clippedUvProgramKey}
+          />
+        </mesh>
+      )}
+    </group>
   );
 }
 
@@ -250,29 +244,23 @@ function BoothShell({ booth }: { booth: BoothSettings }) {
   const width = booth.width / 1000;
   const depth = booth.depth / 1000;
   const height = booth.height / 1000;
-  const floorTexture = useSurfaceTexture({
-    image: booth.floorImage,
+  const floorTexture = useFloorMaterialTexture({
     material: booth.floorMaterial,
-    color: booth.floorColor,
     repeatX: Math.max(1, width),
     repeatY: Math.max(1, depth),
   });
-  const floorSurfaceColor = floorTexture ? "#ffffff" : booth.floorColor;
 
   return (
     <group>
-      <mesh rotation-x={-Math.PI / 2} receiveShadow>
-        <planeGeometry args={[width, depth]} />
-        <meshStandardMaterial color={floorSurfaceColor} map={floorTexture ?? undefined} roughness={0.82} />
-      </mesh>
+      <SurfacePanel settings={booth.floorSurface} color={booth.floorColor} width={width} height={depth} baseMap={floorTexture} position={[0, 0, 0]} rotation={[-Math.PI / 2, 0, 0]} />
       {booth.showGrid && <BoothGrid width={width} depth={depth} />}
       {booth.wallMode !== "none" && (
-        <WallPanel image={booth.wallImages.back} color={booth.wallColor} width={width} height={height} position={[0, height / 2, -depth / 2]} />
+        <SurfacePanel settings={booth.wallSurfaces.back} color={booth.wallColor} width={width} height={height} position={[0, height / 2, -depth / 2]} />
       )}
       {booth.wallMode === "three" && (
         <>
-          <WallPanel image={booth.wallImages.left} color={booth.wallColor} width={depth} height={height} position={[-width / 2, height / 2, 0]} rotation={[0, Math.PI / 2, 0]} />
-          <WallPanel image={booth.wallImages.right} color={booth.wallColor} width={depth} height={height} position={[width / 2, height / 2, 0]} rotation={[0, -Math.PI / 2, 0]} />
+          <SurfacePanel settings={booth.wallSurfaces.left} color={booth.wallColor} width={depth} height={height} position={[-width / 2, height / 2, 0]} rotation={[0, Math.PI / 2, 0]} />
+          <SurfacePanel settings={booth.wallSurfaces.right} color={booth.wallColor} width={depth} height={height} position={[width / 2, height / 2, 0]} rotation={[0, -Math.PI / 2, 0]} />
         </>
       )}
     </group>
@@ -287,10 +275,7 @@ function SelectionOutline({ fixture }: { fixture: Fixture }) {
     <mesh position={[0, height / 2, 0]}>
       <boxGeometry args={[width + 0.035, height + 0.035, depth + 0.035]} />
       <meshBasicMaterial color="#ff6b35" transparent opacity={0.13} depthWrite={false} />
-      <lineSegments>
-        <edgesGeometry args={[new THREE.BoxGeometry(width + 0.04, height + 0.04, depth + 0.04)]} />
-        <lineBasicMaterial color="#ff6b35" />
-      </lineSegments>
+      <Edges color="#ff6b35" />
     </mesh>
   );
 }
@@ -487,17 +472,17 @@ function PrimitiveFixture({ fixture }: { fixture: Fixture }) {
 }
 
 function GlbFixture({ fixture }: { fixture: Fixture }) {
-  const gltf = useGLTF(fixture.modelUrl!);
-  const prepared = useMemo(
-    () => prepareModelToDimensions(
-      gltf.scene,
-      { width: fixture.width, depth: fixture.depth, height: fixture.height },
-      fixture.modelRotation ?? { x: 0, y: 0, z: 0 },
-    ),
-    [fixture.depth, fixture.height, fixture.modelRotation?.x, fixture.modelRotation?.y, fixture.modelRotation?.z, fixture.width, gltf.scene],
+  return (
+    <MeasuredGlb
+      modelUrl={fixture.modelUrl!}
+      width={fixture.width}
+      depth={fixture.depth}
+      height={fixture.height}
+      rotation={fixture.modelRotation ?? { x: 0, y: 0, z: 0 }}
+      materialMode={fixture.glbMaterialMode ?? "original"}
+      color={fixture.color}
+    />
   );
-
-  return <primitive object={prepared.object} />;
 }
 
 function FixtureObject({
@@ -615,7 +600,7 @@ function Stage(props: Props) {
     <>
       <color attach="background" args={["#eee9e1"]} />
       <ambientLight intensity={1.35} />
-      <directionalLight position={[4, 7, 5]} intensity={2.1} castShadow shadow-mapSize={[2048, 2048]} />
+      <directionalLight position={[4, 7, 5]} intensity={2.1} castShadow shadow-mapSize={[1024, 1024]} />
       <directionalLight position={[-3, 4, -2]} intensity={0.55} color="#b7ceff" />
       <BoothShell booth={props.booth} />
       {props.fixtures.map((fixture) => (
@@ -630,7 +615,6 @@ function Stage(props: Props) {
           onDragging={setIsDragging}
         />
       ))}
-      <ContactShadows position={[0, 0.01, 0]} opacity={0.22} scale={10} blur={2.5} far={4} />
       <OrbitControls makeDefault enabled={!isDragging} enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI / 2.01} />
       <CameraDirector booth={props.booth} view={props.view} />
     </>
@@ -638,15 +622,33 @@ function Stage(props: Props) {
 }
 
 export function BoothScene(props: Props) {
+  const selected = props.fixtures.find((fixture) => fixture.id === props.selectedId);
+  const fixturePhotoCount = props.fixtures.reduce((count, fixture) => count + Object.values(fixture.faceTextures ?? {}).filter((settings) => settings?.image).length, 0);
+  const surfaceImageCount = Number(Boolean(props.booth.floorSurface.image)) + Object.values(props.booth.wallSurfaces).filter((surface) => surface.image).length;
   return (
-    <Canvas
-      shadows="basic"
-      camera={{ fov: 42, near: 0.01, far: 100, position: [4, 3.5, 5] }}
-      dpr={[1.5, 2.5]}
-      gl={{ antialias: true, preserveDrawingBuffer: true, powerPreference: "high-performance" }}
-      onPointerMissed={() => props.onSelect(null)}
+    <div
+      className="booth-canvas"
+      data-testid="booth-scene"
+      data-floor-color={props.booth.floorColor}
+      data-wall-color={props.booth.wallColor}
+      data-back-surface={props.booth.wallSurfaces.back.image ? "image" : "color"}
+      data-selected-color={selected?.color ?? ""}
+      data-selected-material-mode={selected?.glbMaterialMode ?? ""}
+      data-selected-transform={selected ? `${selected.width}:${selected.depth}:${selected.height}:${selected.x}:${selected.z}:${selected.rotation}` : ""}
+      data-photo-assets={fixturePhotoCount}
+      data-glb-assets={props.fixtures.filter((fixture) => fixture.modelUrl).length}
+      data-surface-assets={surfaceImageCount}
     >
-      <Stage {...props} />
-    </Canvas>
+      <Canvas
+        frameloop="demand"
+        shadows="basic"
+        camera={{ fov: 42, near: 0.01, far: 100, position: [4, 3.5, 5] }}
+        dpr={[1, 1.75]}
+        gl={{ antialias: true, powerPreference: "high-performance" }}
+        onPointerMissed={() => props.onSelect(null)}
+      >
+        <Stage {...props} />
+      </Canvas>
+    </div>
   );
 }

@@ -20,8 +20,9 @@ export type FixtureCategory =
 export type FixtureFace = "front" | "left" | "right" | "back";
 export type TextureFit = "contain" | "cover";
 export type ModelRotation = { x: number; y: number; z: number };
+export type GlbMaterialMode = "original" | "override";
 
-export type FaceTextureSettings = {
+export type TextureTransformSettings = {
   image?: string;
   fit: TextureFit;
   zoom: number;
@@ -29,6 +30,9 @@ export type FaceTextureSettings = {
   y: number;
   rotation: number;
 };
+
+export type FaceTextureSettings = TextureTransformSettings;
+export type SurfaceTextureSettings = TextureTransformSettings;
 
 export type BoothSettings = {
   width: number;
@@ -39,8 +43,8 @@ export type BoothSettings = {
   floorColor: string;
   floorMaterial: FloorMaterial;
   showGrid: boolean;
-  floorImage?: string;
-  wallImages: Partial<Record<WallSide, string>>;
+  floorSurface: SurfaceTextureSettings;
+  wallSurfaces: Record<WallSide, SurfaceTextureSettings>;
 };
 
 export type Fixture = {
@@ -57,13 +61,14 @@ export type Fixture = {
   modelUrl?: string;
   source: "primitive" | "photo" | "upload";
   modelRotation?: ModelRotation;
+  glbMaterialMode?: GlbMaterialMode;
   faceTextures?: Partial<Record<FixtureFace, FaceTextureSettings>>;
 };
 
 export type AssetManifest = Record<string, { mimeType: string }>;
 
 export type ProjectData = {
-  version: 2;
+  version: 3;
   name: string;
   booth: BoothSettings;
   fixtures: Fixture[];
@@ -71,10 +76,12 @@ export type ProjectData = {
   assets?: AssetManifest;
 };
 
-export const DEFAULT_FACE_TEXTURE: FaceTextureSettings = {
+export const DEFAULT_TEXTURE_TRANSFORM: TextureTransformSettings = {
   fit: "contain",
   zoom: 1,
   x: 0,
   y: 0,
   rotation: 0,
 };
+
+export const DEFAULT_FACE_TEXTURE: FaceTextureSettings = DEFAULT_TEXTURE_TRANSFORM;
