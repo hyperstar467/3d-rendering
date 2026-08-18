@@ -19,8 +19,11 @@ export function useMappedTexture(
 
   useEffect(() => {
     let active = true;
-    setLoaded(null);
-    if (!image) return;
+    if (!image) {
+      setLoaded(null);
+      invalidate();
+      return;
+    }
 
     const loader = new THREE.TextureLoader();
     loader.load(
@@ -85,4 +88,17 @@ export function clipOutsideTransformedUv(shader: THREE.WebGLProgramParametersWit
 
 export function clippedUvProgramKey() {
   return "pawplan-clipped-transformed-uv-v1";
+}
+
+export function patchImageMapShader(shader: THREE.WebGLProgramParametersWithUniforms) {
+  shader.fragmentShader = shader.fragmentShader.replace(
+    "#include <map_fragment>",
+    `vec4 hustleBaseColor = diffuseColor;
+    #include <map_fragment>
+    if (vMapUv.x < 0.0 || vMapUv.x > 1.0 || vMapUv.y < 0.0 || vMapUv.y > 1.0) {
+      diffuseColor = hustleBaseColor;
+    } else {
+      diffuseColor = vec4(sampledDiffuseColor.rgb, sampledDiffuseColor.a * hustleBaseColor.a);
+    }`,
+  );
 }

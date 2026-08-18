@@ -277,31 +277,38 @@ function Hierarchy({ asset, selectedIds, search, collapsed, onSelect, onExpand, 
 function MaterialEditor({
   material,
   onChange,
+  onPreviewImageChange,
 }: {
   material: MaterialStyle;
   onChange: (material: MaterialStyle) => void;
+  onPreviewImageChange: (image?: string) => void;
 }) {
   const latestMaterial = useRef(material);
   const objectUrl = useRef<string | undefined>(undefined);
+  const previewCallback = useRef(onPreviewImageChange);
   const [loading, setLoading] = useState(false);
   const [uploadError, setUploadError] = useState<string>();
   latestMaterial.current = material;
-  useEffect(() => () => { if (objectUrl.current) URL.revokeObjectURL(objectUrl.current); }, []);
+  previewCallback.current = onPreviewImageChange;
+  useEffect(() => () => {
+    if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
+    previewCallback.current(undefined);
+  }, []);
   const chooseImage = async (file: File) => {
     if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
     const previewUrl = URL.createObjectURL(file);
     objectUrl.current = previewUrl;
     setLoading(true);
     setUploadError(undefined);
-    onChange({ ...latestMaterial.current, image: { ...latestMaterial.current.image, image: previewUrl, imageName: file.name } });
+    onPreviewImageChange(previewUrl);
     try {
       const image = await readFileAsDataUrl(file);
       onChange({ ...latestMaterial.current, image: { ...latestMaterial.current.image, image, imageName: file.name } });
+      onPreviewImageChange(undefined);
     } catch (error) {
+      onPreviewImageChange(undefined);
       setUploadError(error instanceof Error ? error.message : "이미지를 읽지 못했습니다.");
     } finally {
-      URL.revokeObjectURL(previewUrl);
-      if (objectUrl.current === previewUrl) objectUrl.current = undefined;
       setLoading(false);
     }
   };
@@ -348,7 +355,7 @@ function MaterialEditor({
           <label className="field field-stack"><span>이미지 X {material.image.x}%</span><input type="range" min="-100" max="100" value={material.image.x} onInput={(event) => onChange({ ...material, image: { ...material.image, x: Number(event.currentTarget.value) } })} /></label>
           <label className="field field-stack"><span>이미지 Y {material.image.y}%</span><input type="range" min="-100" max="100" value={material.image.y} onInput={(event) => onChange({ ...material, image: { ...material.image, y: Number(event.currentTarget.value) } })} /></label>
           <NumberField label="이미지 회전" value={material.image.rotation} suffix="°" onCommit={(rotation) => onChange({ ...material, image: { ...material.image, rotation } })} />
-          <button className="text-button danger" onClick={() => onChange({ ...material, image: { ...material.image, image: undefined, imageName: undefined } })}>이미지 제거</button>
+          <button className="text-button danger" onClick={() => { onPreviewImageChange(undefined); onChange({ ...material, image: { ...material.image, image: undefined, imageName: undefined } }); }}>이미지 제거</button>
         </>
       )}
     </div>
@@ -425,6 +432,7 @@ export function AssetBuilder({ initialAsset, onBack, onSave, onAddToSpace }: Pro
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
   const [isolateIds, setIsolateIds] = useState<string[]>([]);
   const [glbLoading, setGlbLoading] = useState(false);
+  const [materialPreview, setMaterialPreview] = useState<{ nodeId: string; regionId: string; image: string }>();
   const glbInput = useRef<HTMLInputElement>(null);
   const clipboard = useRef<{ asset: AssetDefinition; rootIds: string[] } | null>(null);
   const bounds = useMemo(() => getAssetBounds(asset), [asset]);
@@ -439,6 +447,7 @@ export function AssetBuilder({ initialAsset, onBack, onSave, onAddToSpace }: Pro
     setSelectedIds(initialAsset.nodes[0] ? [initialAsset.nodes[0].id] : []);
   }, [initialAsset.id]);
   useEffect(() => setSelectedIds((current) => current.filter((id) => asset.nodes.some((node) => node.id === id))), [asset.nodes]);
+  useEffect(() => setMaterialPreview(undefined), [regionId, selected?.id]);
 
   const commit = useCallback((recipe: (draft: AssetDefinition) => void) => {
     history.commit((current) => {
@@ -690,6 +699,7 @@ export function AssetBuilder({ initialAsset, onBack, onSave, onAddToSpace }: Pro
             interactionMode={interactionMode}
             isolateIds={isolateIds}
             coordinateSpace={coordinateSpace}
+            materialPreview={materialPreview}
             onTransformChange={(nodeId, transform) => commit((draft) => {
               const origin = draft.nodes.find((node) => node.id === nodeId);
               if (!origin || isTransformLocked(nodeId, draft.nodes)) return;
@@ -762,13 +772,14 @@ export function AssetBuilder({ initialAsset, onBack, onSave, onAddToSpace }: Pro
                     <h2>Material / Image</h2>
                     {selected.source.kind === "glb" ? <>
                       <div className="segmented"><button className={(selected.source.materialMode ?? "original") === "original" ? "active" : ""} onClick={() => updateNode(setGlbMaterialMode(selected, "original"))}>원본 재질</button><button className={selected.source.materialMode === "override" ? "active" : ""} onClick={() => updateNode(setGlbMaterialMode(selected, "override"))}>단색 Override</button></div>
-                      {selected.source.materialMode === "override" && <MaterialEditor material={selected.material} onChange={(material) => updateNode({ ...selected, material })} />}
+                      {selected.source.materialMode === "override" && <MaterialEditor material={selected.material} onChange={(material) => updateNode({ ...selected, material })} onPreviewImageChange={(image) => setMaterialPreview(image ? { nodeId: selected.id, regionId: "default", image } : undefined)} />}
                     </> : (
                       <>
                         <label className="field"><span>영역</span><select value={regionId} onChange={(event) => setRegionId(event.currentTarget.value)}><option value="default">전체 기본</option>{geometryRegions(selected.source).map((region) => <option key={region.id} value={region.id}>{region.label}</option>)}</select></label>
                         <MaterialEditor
                           material={regionId === "default" ? selected.material : selected.regionMaterials[regionId] ?? createMaterial(selected.material.color)}
                           onChange={(material) => updateNode(regionId === "default" ? { ...selected, material } : { ...selected, regionMaterials: { ...selected.regionMaterials, [regionId]: material } })}
+                          onPreviewImageChange={(image) => setMaterialPreview(image ? { nodeId: selected.id, regionId, image } : undefined)}
                         />
                       </>
                     )}

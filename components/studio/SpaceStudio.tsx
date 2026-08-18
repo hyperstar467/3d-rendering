@@ -3,12 +3,12 @@
 import { ChevronLeft, Copy, Eye, Grid3X3, ImagePlus, Move3d, Pencil, Redo2, RotateCw, Trash2, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DraftNumberInput } from "@/components/DraftNumberInput";
-import { SpaceScene } from "@/components/studio/SpaceScene";
+import { SpaceScene, type SpaceCameraRequest, type SpaceCameraView } from "@/components/studio/SpaceScene";
 import { useHistory } from "@/studio/commands/useHistory";
 import { createId } from "@/studio/domain/defaults";
 import type { AssetDefinition, AssetInstance, SpaceDefinition, SurfaceSettings } from "@/studio/domain/types";
 import { getAssetBounds } from "@/studio/geometry/bounds";
-import { clampInstance } from "@/studio/space/placement";
+import { clampInstance, placementClearances, snapValue } from "@/studio/space/placement";
 
 type Props = {
   space: SpaceDefinition;
@@ -51,33 +51,38 @@ function DimensionDraft({ space, onApply }: { space: SpaceDefinition; onApply: (
   );
 }
 
-function SurfaceEditor({ title, surface, presets, onChange }: { title: string; surface: SurfaceSettings; presets: Array<{ name: string; patch: Partial<SurfaceSettings> }>; onChange: (surface: SurfaceSettings) => void }) {
+function SurfaceEditor({ surfaceId, title, surface, presets, onChange, onPreviewImageChange }: { surfaceId: "floor" | "back" | "left" | "right"; title: string; surface: SurfaceSettings; presets: Array<{ name: string; patch: Partial<SurfaceSettings> }>; onChange: (surface: SurfaceSettings) => void; onPreviewImageChange: (image?: string) => void }) {
   const latestSurface = useRef(surface);
   const objectUrl = useRef<string | undefined>(undefined);
+  const previewCallback = useRef(onPreviewImageChange);
   const [loading, setLoading] = useState(false);
   const [uploadError, setUploadError] = useState<string>();
   latestSurface.current = surface;
-  useEffect(() => () => { if (objectUrl.current) URL.revokeObjectURL(objectUrl.current); }, []);
+  previewCallback.current = onPreviewImageChange;
+  useEffect(() => () => {
+    if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
+    previewCallback.current(undefined);
+  }, []);
   const chooseImage = async (file: File) => {
     if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
     const previewUrl = URL.createObjectURL(file);
     objectUrl.current = previewUrl;
     setLoading(true);
     setUploadError(undefined);
-    onChange({ ...latestSurface.current, image: previewUrl, imageName: file.name });
+    onPreviewImageChange(previewUrl);
     try {
       const image = await fileToDataUrl(file);
       onChange({ ...latestSurface.current, image, imageName: file.name });
+      onPreviewImageChange(undefined);
     } catch (error) {
+      onPreviewImageChange(undefined);
       setUploadError(error instanceof Error ? error.message : "이미지를 읽지 못했습니다.");
     } finally {
-      URL.revokeObjectURL(previewUrl);
-      if (objectUrl.current === previewUrl) objectUrl.current = undefined;
       setLoading(false);
     }
   };
   return (
-    <details className="surface-card">
+    <details className="surface-card" data-testid={`surface-${surfaceId}`}>
       <summary><span>{title}</span><span className="surface-swatch" style={{ background: surface.color }} /></summary>
       <div className="surface-presets">{presets.map((preset) => <button key={preset.name} onClick={() => onChange({ ...surface, ...preset.patch })}>{preset.name}</button>)}</div>
       <label className="field color-field"><span>색상</span><input type="color" value={surface.color} onInput={(event) => onChange({ ...surface, color: event.currentTarget.value })} /></label>
@@ -90,7 +95,7 @@ function SurfaceEditor({ title, surface, presets, onChange }: { title: string; s
         <label className="field field-stack"><span>X {surface.x}%</span><input type="range" min="-100" max="100" value={surface.x} onInput={(event) => onChange({ ...surface, x: Number(event.currentTarget.value) })} /></label>
         <label className="field field-stack"><span>Y {surface.y}%</span><input type="range" min="-100" max="100" value={surface.y} onInput={(event) => onChange({ ...surface, y: Number(event.currentTarget.value) })} /></label>
         <label className="field"><span>회전</span><span className="number-wrap"><DraftNumberInput value={surface.rotation} onCommit={(rotation) => onChange({ ...surface, rotation })} /><small>°</small></span></label>
-        <button className="text-button danger" onClick={() => onChange({ ...surface, image: undefined, imageName: undefined })}>이미지 제거</button>
+        <button className="text-button danger" onClick={() => { onPreviewImageChange(undefined); onChange({ ...surface, image: undefined, imageName: undefined }); }}>이미지 제거</button>
       </div>}
     </details>
   );
@@ -108,11 +113,17 @@ export function SpaceStudio({ space: initialSpace, assets, onChange: onProjectSp
   const [selectedId, setSelectedId] = useState<string | undefined>(() => initialSpace.instances.at(-1)?.id);
   const [error, setError] = useState<string>();
   const [interactionMode, setInteractionMode] = useState<"view" | "place">("view");
+  const [surfacePreviews, setSurfacePreviews] = useState<Partial<Record<"floor" | "back" | "left" | "right", string>>>({});
+  const [moveSnap, setMoveSnap] = useState(50);
+  const [rotationSnap, setRotationSnap] = useState(15);
+  const [cameraRequest, setCameraRequest] = useState<SpaceCameraRequest>({ id: 1, view: "perspective" });
   useEffect(() => { onProjectSpaceChangeRef.current(space); }, [space]);
   const commitSpace = useCallback((update: SpaceDefinition | ((current: SpaceDefinition) => SpaceDefinition)) => history.commit(update), [history.commit]);
   const selected = space.instances.find((instance) => instance.id === selectedId);
   const selectedAsset = assets.find((asset) => asset.id === selected?.assetId);
   const updateInstance = (id: string, update: (instance: AssetInstance) => AssetInstance) => commitSpace((current) => ({ ...current, instances: current.instances.map((instance) => instance.id === id ? update(instance) : instance) }));
+  const updateInstanceInGesture = (id: string, update: (instance: AssetInstance) => AssetInstance) => history.updateTransaction((current) => ({ ...current, instances: current.instances.map((instance) => instance.id === id ? update(instance) : instance) }));
+  const requestCamera = (view: SpaceCameraView) => setCameraRequest((current) => ({ id: current.id + 1, view }));
   const addAsset = (asset: AssetDefinition) => {
     const bounds = getAssetBounds(asset);
     const placement = clampInstance(bounds, space, 0, 0, 0);
@@ -124,9 +135,10 @@ export function SpaceStudio({ space: initialSpace, assets, onChange: onProjectSp
   };
   const rotate = (rotation: number) => {
     if (!selected || !selectedAsset) return;
-    const placement = clampInstance(getAssetBounds(selectedAsset), space, rotation, selected.position.x, selected.position.z);
+    const snappedRotation = snapValue(rotation, rotationSnap);
+    const placement = clampInstance(getAssetBounds(selectedAsset), space, snappedRotation, selected.position.x, selected.position.z);
     if (!placement.fits) return setError(placement.message);
-    updateInstance(selected.id, (instance) => ({ ...instance, rotation, position: { x: placement.x, z: placement.z } }));
+    updateInstance(selected.id, (instance) => ({ ...instance, rotation: snappedRotation, position: { x: placement.x, z: placement.z } }));
     setError(undefined);
   };
   const applySpaceSize = (dimensions: { width: number; depth: number; height: number }) => {
@@ -142,6 +154,21 @@ export function SpaceStudio({ space: initialSpace, assets, onChange: onProjectSp
     setError(undefined);
   };
   const dimensions = useMemo(() => selectedAsset ? getAssetBounds(selectedAsset) : null, [selectedAsset]);
+  const clearances = useMemo(() => selected && dimensions ? placementClearances(dimensions, space, selected.rotation, selected.position.x, selected.position.z) : null, [dimensions, selected, space]);
+  const duplicateInstance = (instance: AssetInstance) => {
+    const asset = assets.find((candidate) => candidate.id === instance.assetId);
+    if (!asset) return;
+    const bounds = getAssetBounds(asset);
+    const placement = clampInstance(bounds, space, instance.rotation, snapValue(instance.position.x + 100, moveSnap), snapValue(instance.position.z + 100, moveSnap));
+    if (!placement.fits) return setError(placement.message);
+    const copy = { ...instance, id: createId("instance"), name: `${instance.name} 복사본`, position: { x: placement.x, z: placement.z } };
+    commitSpace((current) => ({ ...current, instances: [...current.instances, copy] }));
+    setSelectedId(copy.id);
+  };
+  const removeInstance = (instanceId: string) => {
+    commitSpace((current) => ({ ...current, instances: current.instances.filter((instance) => instance.id !== instanceId) }));
+    if (selectedId === instanceId) setSelectedId(undefined);
+  };
 
   useEffect(() => {
     let changed = false;
@@ -195,16 +222,19 @@ export function SpaceStudio({ space: initialSpace, assets, onChange: onProjectSp
             <h2>벽 / 바닥</h2>
             <label className="field"><span>벽 구성</span><select value={space.wallMode} onChange={(event) => { const wallMode = event.currentTarget.value as SpaceDefinition["wallMode"]; commitSpace((current) => ({ ...current, wallMode })); }}><option value="three">3면</option><option value="back">후면</option><option value="none">없음</option></select></label>
             <label className="check-row"><input type="checkbox" checked={space.gridVisible} onChange={(event) => { const gridVisible = event.currentTarget.checked; commitSpace((current) => ({ ...current, gridVisible })); }} /><Grid3X3 size={16} /> 500mm Grid</label>
-            <SurfaceEditor title="바닥" surface={space.floor} presets={FLOOR_PRESETS} onChange={(floor) => commitSpace((current) => ({ ...current, floor }))} />
-            <SurfaceEditor title="후면벽" surface={space.walls.back} presets={WALL_PRESETS} onChange={(back) => commitSpace((current) => ({ ...current, walls: { ...current.walls, back } }))} />
-            <SurfaceEditor title="좌측벽" surface={space.walls.left} presets={WALL_PRESETS} onChange={(left) => commitSpace((current) => ({ ...current, walls: { ...current.walls, left } }))} />
-            <SurfaceEditor title="우측벽" surface={space.walls.right} presets={WALL_PRESETS} onChange={(right) => commitSpace((current) => ({ ...current, walls: { ...current.walls, right } }))} />
+            <SurfaceEditor surfaceId="floor" title="바닥" surface={space.floor} presets={FLOOR_PRESETS} onPreviewImageChange={(image) => setSurfacePreviews((current) => ({ ...current, floor: image }))} onChange={(floor) => commitSpace((current) => ({ ...current, floor }))} />
+            <SurfaceEditor surfaceId="back" title="후면벽" surface={space.walls.back} presets={WALL_PRESETS} onPreviewImageChange={(image) => setSurfacePreviews((current) => ({ ...current, back: image }))} onChange={(back) => commitSpace((current) => ({ ...current, walls: { ...current.walls, back } }))} />
+            <SurfaceEditor surfaceId="left" title="좌측벽" surface={space.walls.left} presets={WALL_PRESETS} onPreviewImageChange={(image) => setSurfacePreviews((current) => ({ ...current, left: image }))} onChange={(left) => commitSpace((current) => ({ ...current, walls: { ...current.walls, left } }))} />
+            <SurfaceEditor surfaceId="right" title="우측벽" surface={space.walls.right} presets={WALL_PRESETS} onPreviewImageChange={(image) => setSurfacePreviews((current) => ({ ...current, right: image }))} onChange={(right) => commitSpace((current) => ({ ...current, walls: { ...current.walls, right } }))} />
           </section>
+          <section className="panel-section"><h2>배치 Snap</h2><div className="property-grid"><label className="field"><span>이동</span><select aria-label="이동 Snap" value={moveSnap} onChange={(event) => setMoveSnap(Number(event.currentTarget.value))}><option value="0">끄기</option><option value="10">10 mm</option><option value="50">50 mm</option><option value="100">100 mm</option><option value="500">500 mm</option></select></label><label className="field"><span>회전</span><select aria-label="회전 Snap" value={rotationSnap} onChange={(event) => setRotationSnap(Number(event.currentTarget.value))}><option value="0">끄기</option><option value="15">15°</option><option value="45">45°</option><option value="90">90°</option></select></label></div></section>
+          <section className="panel-section"><div className="section-heading"><h2>배치된 오브젝트</h2><span>{space.instances.length}</span></div>{space.instances.length ? <div className="space-instance-list">{space.instances.map((instance) => <div className={`space-instance-row ${selectedId === instance.id ? "selected" : ""}`} key={instance.id}><button className="space-instance-select" onClick={() => setSelectedId(instance.id)}><span>{instance.name}</span><small>X {Math.round(instance.position.x)} · Z {Math.round(instance.position.z)} · {Math.round(instance.rotation)}°</small></button><span className="space-instance-actions"><button aria-label={`${instance.name} 복제`} onClick={() => duplicateInstance(instance)}><Copy /></button><button aria-label={`${instance.name} 다시 편집`} onClick={() => onEditAsset(instance.assetId)}><Pencil /></button><button aria-label={`${instance.name} 삭제`} onClick={() => removeInstance(instance.id)}><Trash2 /></button></span></div>)}</div> : <p className="empty-note">공간에 배치된 오브젝트가 없습니다.</p>}</section>
           <section className="panel-section"><h2>내 오브젝트 추가</h2>{assets.length ? <div className="asset-add-list">{assets.map((asset) => <button key={asset.id} onClick={() => addAsset(asset)}><span>{asset.name}</span><small>+ 공간에 추가</small></button>)}</div> : <p className="empty-note">먼저 3D 오브젝트를 만들어 저장하세요.</p>}</section>
         </aside>
         <div className="studio-canvas">
           <div className="interaction-modes" role="group" aria-label="공간 조작 모드"><button className={interactionMode === "view" ? "active" : ""} onClick={() => setInteractionMode("view")}><Eye /> 보기</button><button className={interactionMode === "place" ? "active" : ""} onClick={() => setInteractionMode("place")}><Move3d /> 배치</button></div>
-          <SpaceScene space={space} assets={assets} selectedId={selectedId} interactionMode={interactionMode} onSelect={setSelectedId} onMove={(instanceId, x, z) => updateInstance(instanceId, (instance) => ({ ...instance, position: { x, z } }))} onRotate={(instanceId, rotation, x, z) => updateInstance(instanceId, (instance) => ({ ...instance, rotation, position: { x, z } }))} onPlacementError={setError} />
+          <div className="space-camera-toolbar" role="group" aria-label="공간 Camera View">{([['perspective', '원근'], ['front', '정면'], ['back', '후면'], ['left', '좌측'], ['right', '우측'], ['top', '상단']] as Array<[SpaceCameraView, string]>).map(([view, label]) => <button key={view} className={cameraRequest.view === view ? "active" : ""} onClick={() => requestCamera(view)}>{label}</button>)}<button onClick={() => requestCamera("fit")}>전체 공간 보기</button><button disabled={!selectedId} onClick={() => requestCamera("selection")}>선택 항목 보기</button></div>
+          <SpaceScene space={space} assets={assets} surfacePreviews={surfacePreviews} selectedId={selectedId} interactionMode={interactionMode} moveSnap={moveSnap} rotationSnap={rotationSnap} cameraRequest={cameraRequest} onGestureStart={history.beginTransaction} onGestureEnd={history.endTransaction} onSelect={setSelectedId} onMove={(instanceId, x, z) => updateInstanceInGesture(instanceId, (instance) => ({ ...instance, position: { x, z } }))} onRotate={(instanceId, rotation, x, z) => updateInstanceInGesture(instanceId, (instance) => ({ ...instance, rotation, position: { x, z } }))} onPlacementError={setError} />
           {error && <div className="error-toast">{error}</div>}
           <div className="canvas-help">{interactionMode === "view" ? "보기 모드 · 빈 공간 드래그 Orbit / Pan / Zoom" : "배치 모드 · 오브젝트 드래그 이동 / 주황 핸들 회전 · 카메라 고정"}</div>
         </div>
@@ -212,8 +242,9 @@ export function SpaceStudio({ space: initialSpace, assets, onChange: onProjectSp
           {selected && selectedAsset && dimensions ? <>
             <section className="panel-section"><span className="eyebrow">ASSET INSTANCE</span><h2 className="instance-title">{selected.name}</h2><p className="hint">AssetDefinition은 유지되고, 이 Instance의 위치와 회전만 달라집니다.</p></section>
             <section className="panel-section"><h2>실측 Bounding Size</h2><div className="metric-row"><span>W {Math.round(dimensions.width)}</span><span>D {Math.round(dimensions.depth)}</span><span>H {Math.round(dimensions.height)} mm</span></div></section>
-            <section className="panel-section"><h2>배치</h2><div className="property-grid"><label className="field"><span>X</span><span className="number-wrap"><DraftNumberInput value={selected.position.x} onCommit={(x) => { const placement = clampInstance(dimensions, space, selected.rotation, x, selected.position.z); if (placement.fits) updateInstance(selected.id, (instance) => ({ ...instance, position: { x: placement.x, z: placement.z } })); else setError(placement.message); }} /><small>mm</small></span></label><label className="field"><span>Z</span><span className="number-wrap"><DraftNumberInput value={selected.position.z} onCommit={(z) => { const placement = clampInstance(dimensions, space, selected.rotation, selected.position.x, z); if (placement.fits) updateInstance(selected.id, (instance) => ({ ...instance, position: { x: placement.x, z: placement.z } })); else setError(placement.message); }} /><small>mm</small></span></label></div><label className="field"><span>Y 회전</span><span className="number-wrap"><DraftNumberInput value={selected.rotation} onCommit={rotate} /><small>°</small></span></label><div className="quick-rotate"><button onClick={() => rotate(selected.rotation - 15)}><RotateCw size={14} /> -15°</button><button onClick={() => rotate(selected.rotation + 15)}><RotateCw size={14} /> +15°</button><button onClick={() => rotate(selected.rotation + 90)}>+90°</button></div></section>
-            <section className="panel-section instance-actions"><button onClick={() => onEditAsset(selectedAsset.id)}><Pencil size={15} /> 다시 편집</button><button onClick={() => { const copy = { ...selected, id: createId("instance"), name: `${selected.name} 복사본`, position: { x: selected.position.x + 100, z: selected.position.z + 100 } }; const placement = clampInstance(dimensions, space, copy.rotation, copy.position.x, copy.position.z); if (placement.fits) commitSpace((current) => ({ ...current, instances: [...current.instances, { ...copy, position: { x: placement.x, z: placement.z } }] })); }}><Copy size={15} /> 복제</button><button className="danger" onClick={() => { commitSpace((current) => ({ ...current, instances: current.instances.filter((instance) => instance.id !== selected.id) })); setSelectedId(undefined); }}><Trash2 size={15} /> 삭제</button></section>
+            <section className="panel-section"><h2>배치</h2><div className="property-grid"><label className="field"><span>X</span><span className="number-wrap"><DraftNumberInput value={selected.position.x} onCommit={(value) => { const x = snapValue(value, moveSnap); const placement = clampInstance(dimensions, space, selected.rotation, x, selected.position.z); if (placement.fits) updateInstance(selected.id, (instance) => ({ ...instance, position: { x: placement.x, z: placement.z } })); else setError(placement.message); }} /><small>mm</small></span></label><label className="field"><span>Z</span><span className="number-wrap"><DraftNumberInput value={selected.position.z} onCommit={(value) => { const z = snapValue(value, moveSnap); const placement = clampInstance(dimensions, space, selected.rotation, selected.position.x, z); if (placement.fits) updateInstance(selected.id, (instance) => ({ ...instance, position: { x: placement.x, z: placement.z } })); else setError(placement.message); }} /><small>mm</small></span></label></div><label className="field"><span>Y 회전</span><span className="number-wrap"><DraftNumberInput value={selected.rotation} onCommit={rotate} /><small>°</small></span></label><div className="quick-rotate"><button onClick={() => rotate(selected.rotation - 15)}><RotateCw size={14} /> -15°</button><button onClick={() => rotate(selected.rotation + 15)}><RotateCw size={14} /> +15°</button><button onClick={() => rotate(selected.rotation + 90)}>+90°</button></div></section>
+            {clearances && <section className="panel-section"><h2>벽 / 경계까지 거리</h2><div className="clearance-grid"><span>왼쪽<strong>{Math.round(clearances.left)} mm</strong></span><span>오른쪽<strong>{Math.round(clearances.right)} mm</strong></span><span>후면<strong>{Math.round(clearances.back)} mm</strong></span><span>전면<strong>{Math.round(clearances.front)} mm</strong></span></div><p className="hint">회전된 {Math.round(clearances.footprint.width)} × {Math.round(clearances.footprint.depth)} mm footprint 기준</p></section>}
+            <section className="panel-section instance-actions"><button onClick={() => onEditAsset(selectedAsset.id)}><Pencil size={15} /> 다시 편집</button><button onClick={() => duplicateInstance(selected)}><Copy size={15} /> 복제</button><button className="danger" onClick={() => removeInstance(selected.id)}><Trash2 size={15} /> 삭제</button></section>
           </> : <div className="inspector-empty"><RotateCw /><h2>배치된 오브젝트 선택</h2><p>오브젝트를 클릭하면 정확한 위치·회전·복제·재편집 기능이 표시됩니다.</p></div>}
         </aside>
       </section>

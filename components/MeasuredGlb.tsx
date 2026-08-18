@@ -7,7 +7,7 @@ import * as THREE from "three";
 import type { ModelDimensions } from "@/lib/modelTransform";
 import { prepareModelToDimensions } from "@/lib/modelTransform";
 import type { EulerDegrees, MaterialStyle } from "@/studio/domain/types";
-import { useMappedTexture } from "@/components/useMappedTexture";
+import { patchImageMapShader, useMappedTexture } from "@/components/useMappedTexture";
 
 type Props = ModelDimensions & {
   modelUrl: string;
@@ -26,10 +26,12 @@ export function MeasuredGlb({ materialMode = "original", color = "#d9d2c7", mate
     () => prepareModelToDimensions(gltf.scene, props, props.rotation),
     [gltf.scene, props.depth, props.height, props.rotation.x, props.rotation.y, props.rotation.z, props.width],
   );
-  const overrideMaterial = useMemo(
-    () => new THREE.MeshStandardMaterial({ color, roughness: 0.62, metalness: 0.04 }),
-    [],
-  );
+  const overrideMaterial = useMemo(() => {
+    const next = new THREE.MeshStandardMaterial({ color, roughness: 0.62, metalness: 0.04 });
+    next.onBeforeCompile = (shader) => { if (next.map) patchImageMapShader(shader); };
+    next.customProgramCacheKey = () => `hustle-glb-override-${next.map ? "map" : "color"}-v2`;
+    return next;
+  }, []);
 
   useEffect(() => () => overrideMaterial.dispose(), [overrideMaterial]);
 
@@ -39,8 +41,9 @@ export function MeasuredGlb({ materialMode = "original", color = "#d9d2c7", mate
     overrideMaterial.metalness = material?.metalness ?? 0.04;
     overrideMaterial.opacity = material?.opacity ?? 1;
     overrideMaterial.transparent = (material?.opacity ?? 1) < 1;
+    const hadMap = Boolean(overrideMaterial.map);
     overrideMaterial.map = mappedTexture;
-    overrideMaterial.needsUpdate = true;
+    if (hadMap !== Boolean(mappedTexture)) overrideMaterial.needsUpdate = true;
     invalidate();
   }, [color, invalidate, mappedTexture, material?.color, material?.metalness, material?.opacity, material?.roughness, overrideMaterial]);
 

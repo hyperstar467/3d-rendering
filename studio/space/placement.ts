@@ -10,6 +10,27 @@ export function rotatedFootprint(width: number, depth: number, rotation: number)
   };
 }
 
+export function snapValue(value: number, step: number) {
+  return step > 0 ? Math.round(value / step) * step : value;
+}
+
+export function placementClearances(
+  dimensions: AssetFootprint,
+  space: Pick<SpaceDefinition, "width" | "depth">,
+  rotation: number,
+  x: number,
+  z: number,
+) {
+  const footprint = rotatedFootprint(dimensions.width, dimensions.depth, rotation);
+  return {
+    left: space.width / 2 + x - footprint.width / 2,
+    right: space.width / 2 - x - footprint.width / 2,
+    back: space.depth / 2 + z - footprint.depth / 2,
+    front: space.depth / 2 - z - footprint.depth / 2,
+    footprint,
+  };
+}
+
 export function clampInstance(
   dimensions: AssetFootprint,
   space: Pick<SpaceDefinition, "width" | "depth">,

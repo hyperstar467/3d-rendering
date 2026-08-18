@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { createEmptyAsset, createPart } from "../studio/domain/defaults";
 import { buildGeometry } from "../studio/geometry/buildGeometry";
 import { getAssetBounds } from "../studio/geometry/bounds";
-import { clampInstance, rotatedFootprint } from "../studio/space/placement";
+import { clampInstance, placementClearances, rotatedFootprint, snapValue } from "../studio/space/placement";
 import { prepareModelToDimensions } from "../lib/modelTransform";
 
 function geometrySize(geometry: THREE.BufferGeometry) {
@@ -72,6 +72,10 @@ test("Asset bounds, rotated placement and GLB measurement remain exact in mm", (
   const placement = clampInstance({ width: 1200, depth: 450 }, { width: 6000, depth: 4000 }, 90, 9999, 9999);
   expect(placement.fits).toBe(true);
   if (placement.fits) expect({ x: placement.x, z: placement.z }).toEqual({ x: 2775, z: 1400 });
+  expect(snapValue(123, 50)).toBe(100);
+  expect(snapValue(68, 0)).toBe(68);
+  const clearance = placementClearances({ width: 1200, depth: 450 }, { width: 6000, depth: 4000 }, 90, 100, 200);
+  expect(clearance).toMatchObject({ left: 2875, right: 2675, back: 1600, front: 1200 });
 
   const glbSource = new THREE.Group();
   glbSource.add(new THREE.Mesh(new THREE.BoxGeometry(.5, 2, 1.25)));

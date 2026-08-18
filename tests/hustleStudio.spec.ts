@@ -1,6 +1,7 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const fixture = "tests/fixtures/surface-4x3.svg";
+const contrastFixture = "tests/fixtures/surface-contrast.svg";
 
 function trackCriticalErrors(page: Page) {
   const errors: string[] = [];
@@ -30,6 +31,23 @@ async function dragHandle(page: Page, name: string, dx: number, dy: number) {
   await page.mouse.move(box!.x + box!.width / 2 + dx / 2, box!.y + box!.height / 2 + dy / 2, { steps: 3 });
   await page.mouse.move(box!.x + box!.width / 2 + dx, box!.y + box!.height / 2 + dy, { steps: 3 });
   await page.mouse.up();
+}
+
+async function waitForCanvasChange(canvas: Locator, before: Buffer, label: string) {
+  let latest = before;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    await canvas.page().waitForTimeout(100);
+    latest = await canvas.screenshot();
+    if (!latest.equals(before)) return latest;
+  }
+  expect(latest.equals(before), `${label}: 실제 WebGL canvas pixel이 바뀌어야 합니다.`).toBe(false);
+  return latest;
+}
+
+async function uploadSurface(card: Locator, file = contrastFixture) {
+  if (!(await card.getAttribute("open"))) await card.locator("summary").click();
+  await card.locator('input[type="file"]').setInputFiles(file);
+  await expect(card.getByRole("button", { name: "이미지 제거" })).toBeVisible();
 }
 
 test("all core geometry tools create real editable meshes and direct handles", async ({ page }) => {
@@ -211,6 +229,132 @@ test("physical KeyX deletion is IME-safe and independent of the Korean key value
   expect(errors).toEqual([]);
 });
 
+test("Wall, floor and Asset material images change actual WebGL canvas pixels", async ({ page }) => {
+  const errors = trackCriticalErrors(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "공간 스튜디오 열기" }).click();
+  const canvas = page.locator("canvas");
+  await expect(canvas).toBeVisible();
+
+  const surfaces = ["back", "left", "right", "floor"] as const;
+  for (const surface of surfaces) {
+    const view = surface === "back" ? "정면" : surface === "left" ? "우측" : surface === "right" ? "좌측" : "상단";
+    await page.getByRole("button", { name: view, exact: true }).click();
+    const card = page.getByTestId(`surface-${surface}`);
+    const before = await canvas.screenshot();
+    await uploadSurface(card);
+    const withImage = await waitForCanvasChange(canvas, before, `${surface} add`);
+    if (surface === "back") {
+      await card.getByRole("button", { name: "채우기" }).click();
+      await card.locator('input[type="range"]').nth(0).fill("1.7");
+      await card.locator('input[type="range"]').nth(1).fill("35");
+      await card.locator('input[type="range"]').nth(2).fill("-20");
+      await card.getByRole("spinbutton").fill("25");
+      await card.getByRole("spinbutton").press("Enter");
+      const transformed = await waitForCanvasChange(canvas, withImage, "back UV transform");
+      await card.locator('input[type="file"]').setInputFiles(fixture);
+      const replaced = await waitForCanvasChange(canvas, transformed, "back map A to map B");
+      await page.getByRole("button", { name: "실행 취소" }).click();
+      const undone = await waitForCanvasChange(canvas, replaced, "back upload undo");
+      await page.getByRole("button", { name: "다시 실행" }).click();
+      await waitForCanvasChange(canvas, undone, "back upload redo");
+    }
+    const beforeRemove = await canvas.screenshot();
+    await card.getByRole("button", { name: "이미지 제거" }).click();
+    await expect(card.getByRole("button", { name: "이미지 제거" })).toHaveCount(0);
+    await waitForCanvasChange(canvas, beforeRemove, `${surface} remove`);
+  }
+
+  await page.getByRole("button", { name: "뒤로" }).click();
+  await page.getByRole("button", { name: "3D 오브젝트 만들기" }).click();
+  await page.getByRole("button", { name: "Box", exact: true }).click();
+  const assetCanvas = page.locator("canvas");
+  const boxBefore = await assetCanvas.screenshot();
+  await page.getByLabel("영역").selectOption({ label: "앞" });
+  await page.locator('input[type="file"][accept="image/*"]').last().setInputFiles(contrastFixture);
+  const boxMapped = await waitForCanvasChange(assetCanvas, boxBefore, "Box material region add");
+  await page.getByRole("button", { name: "이미지 제거" }).click();
+  await waitForCanvasChange(assetCanvas, boxMapped, "Box material region remove");
+
+  await page.getByRole("button", { name: /Sketch → Extrude/ }).click();
+  await page.getByLabel("영역").selectOption({ label: "앞" });
+  const extrudeBefore = await assetCanvas.screenshot();
+  await page.locator('input[type="file"][accept="image/*"]').last().setInputFiles(fixture);
+  await waitForCanvasChange(assetCanvas, extrudeBefore, "Extrude material region add");
+  expect(errors).toEqual([]);
+});
+
+test("Space camera, instance list, snap, clearance and drag history support planning", async ({ page }) => {
+  const errors = trackCriticalErrors(page);
+  await openBuilder(page);
+  await addNamedPart(page, "Box", "Planning Block");
+  await page.getByRole("button", { name: "공간에 추가" }).click();
+  await expect(page.getByTestId("space-studio")).toBeVisible();
+  const addButton = page.locator(".asset-add-list button").first();
+  await addButton.click();
+  await addButton.click();
+  await expect(page.locator(".space-instance-row")).toHaveCount(3);
+
+  await page.getByLabel("이동 Snap").selectOption("50");
+  await page.getByLabel("회전 Snap").selectOption("90");
+  const rows = page.locator(".space-instance-row");
+  await rows.nth(0).locator(".space-instance-select").click();
+  await page.getByRole("spinbutton", { name: "X mm" }).fill("-1000");
+  await page.getByRole("spinbutton", { name: "X mm" }).press("Enter");
+  await rows.nth(2).locator(".space-instance-select").click();
+  await page.getByRole("spinbutton", { name: "X mm" }).fill("1000");
+  await page.getByRole("spinbutton", { name: "X mm" }).press("Enter");
+  await rows.nth(1).locator(".space-instance-select").click();
+  await page.getByRole("spinbutton", { name: "X mm" }).fill("123");
+  await page.getByRole("spinbutton", { name: "X mm" }).press("Enter");
+  await expect(page.getByRole("spinbutton", { name: "X mm" })).toHaveValue("100");
+  await page.getByRole("spinbutton", { name: "Z mm" }).fill("177");
+  await page.getByRole("spinbutton", { name: "Z mm" }).press("Enter");
+  await expect(page.getByRole("spinbutton", { name: "Z mm" })).toHaveValue("200");
+  await page.getByRole("spinbutton", { name: "Y 회전 °" }).fill("50");
+  await page.getByRole("spinbutton", { name: "Y 회전 °" }).press("Enter");
+  await expect(page.getByRole("spinbutton", { name: "Y 회전 °" })).toHaveValue("90");
+  await expect(page.getByRole("heading", { name: "벽 / 경계까지 거리" })).toBeVisible();
+
+  const canvas = page.locator("canvas");
+  const perspective = await canvas.screenshot();
+  await page.getByRole("button", { name: "상단", exact: true }).click();
+  const top = await waitForCanvasChange(canvas, perspective, "top camera preset");
+  await page.getByRole("button", { name: "정면", exact: true }).click();
+  const front = await waitForCanvasChange(canvas, top, "front camera preset");
+  await page.getByRole("button", { name: "원근", exact: true }).click();
+  await waitForCanvasChange(canvas, front, "perspective camera preset");
+  await page.getByRole("button", { name: "전체 공간 보기" }).click();
+  await page.getByRole("button", { name: "선택 항목 보기" }).click();
+
+  await page.getByRole("button", { name: "상단", exact: true }).click();
+  await page.getByRole("button", { name: "배치", exact: true }).click();
+  const startX = await page.getByRole("spinbutton", { name: "X mm" }).inputValue();
+  const startZ = await page.getByRole("spinbutton", { name: "Z mm" }).inputValue();
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width / 2 + 110, box!.y + box!.height / 2, { steps: 8 });
+  await page.mouse.up();
+  const draggedX = await page.getByRole("spinbutton", { name: "X mm" }).inputValue();
+  const draggedZ = await page.getByRole("spinbutton", { name: "Z mm" }).inputValue();
+  expect([draggedX, draggedZ]).not.toEqual([startX, startZ]);
+  expect(Number(draggedX) % 50).toBe(0);
+  expect(Number(draggedZ) % 50).toBe(0);
+  await page.getByRole("button", { name: "실행 취소" }).click();
+  await expect(page.getByRole("spinbutton", { name: "X mm" })).toHaveValue(startX);
+  await expect(page.getByRole("spinbutton", { name: "Z mm" })).toHaveValue(startZ);
+  await page.getByRole("button", { name: "다시 실행" }).click();
+  await expect(page.getByRole("spinbutton", { name: "X mm" })).toHaveValue(draggedX);
+
+  await page.locator(".space-instance-row.selected").getByRole("button", { name: /복제/ }).click();
+  await expect(page.locator(".space-instance-row")).toHaveCount(4);
+  await page.locator(".space-instance-row.selected").getByRole("button", { name: /삭제/ }).click();
+  await expect(page.locator(".space-instance-row")).toHaveCount(3);
+  expect(errors).toEqual([]);
+});
+
 test("Asset, images and Space restore from a portable project archive", async ({ page }) => {
   const errors = trackCriticalErrors(page);
   await openBuilder(page);
@@ -255,7 +399,7 @@ test("Asset, images and Space restore from a portable project archive", async ({
   await expect(page.locator('input[type="color"]').nth(0)).toHaveValue("#1a2b3c");
   await expect(page.locator('input[type="color"]').nth(1)).toHaveValue("#ccddaa");
   await expect(page.getByText(/확대 1.00×/)).toHaveCount(2);
-  await page.getByRole("button", { name: "다시 편집" }).click();
+  await page.getByRole("button", { name: "다시 편집", exact: true }).click();
   await expect(page.locator(".asset-name-input")).toHaveValue("Portable Asset");
   await expect(page.getByLabel("색상")).toHaveValue("#2266aa");
   await expect(page.getByText(/이미지 확대/)).toBeVisible();

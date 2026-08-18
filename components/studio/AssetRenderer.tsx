@@ -3,6 +3,7 @@
 import { Edges } from "@react-three/drei";
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
+import { MappedStandardMaterial } from "@/components/MappedStandardMaterial";
 import { MeasuredGlb } from "@/components/MeasuredGlb";
 import { BendGizmo, CurveControlGizmo, ObjectTransformGizmo } from "@/components/studio/DirectManipulationGizmos";
 import { useMappedTexture } from "@/components/useMappedTexture";
@@ -21,40 +22,28 @@ type Props = {
   onTransformChange?: (nodeId: string, transform: NodeTransform) => void;
   isolateIds?: string[];
   coordinateSpace?: "local" | "world";
+  materialPreview?: { nodeId: string; regionId: string; image: string };
 };
 
 function MaterialSlot({ material, index, aspect }: { material: MaterialStyle; index: number; aspect: number }) {
   const texture = useMappedTexture(material.image.image, material.image, aspect);
   const color = useMemo(() => new THREE.Color(material.color), [material.color]);
   return (
-    <meshStandardMaterial
+    <MappedStandardMaterial
       attach={`material-${index}`}
       color={color}
-      map={texture}
+      texture={texture}
+      programNamespace="hustle-asset-material-image"
       roughness={material.roughness}
       metalness={material.metalness}
       transparent={material.opacity < 1}
       opacity={material.opacity}
       side={THREE.DoubleSide}
-      onBeforeCompile={(shader) => {
-        if (!texture) return;
-        shader.fragmentShader = shader.fragmentShader.replace(
-          "#include <map_fragment>",
-          `vec4 hustleBaseColor = diffuseColor;
-          #include <map_fragment>
-          if (vMapUv.x < 0.0 || vMapUv.x > 1.0 || vMapUv.y < 0.0 || vMapUv.y > 1.0) {
-            diffuseColor = hustleBaseColor;
-          } else {
-            diffuseColor = vec4(sampledDiffuseColor.rgb, sampledDiffuseColor.a * hustleBaseColor.a);
-          }`,
-        );
-      }}
-      customProgramCacheKey={() => texture ? "hustle-material-image-v1" : "hustle-material-color-v1"}
     />
   );
 }
 
-function RenderNode({ asset, node, selectedIds = [], onSelect, onSourceChange, onBendChange, onManipulation = () => undefined, interactionMode = "view", onTransformChange, isolateIds = [], coordinateSpace = "local" }: Props & { node: AssetNode }) {
+function RenderNode({ asset, node, selectedIds = [], onSelect, onSourceChange, onBendChange, onManipulation = () => undefined, interactionMode = "view", onTransformChange, isolateIds = [], coordinateSpace = "local", materialPreview }: Props & { node: AssetNode }) {
   const children = asset.nodes.filter((candidate) => candidate.parentId === node.id);
   const source = node.type === "part" ? node.source : null;
   const modifiers = node.type === "part" ? node.modifiers : null;
@@ -97,7 +86,7 @@ function RenderNode({ asset, node, selectedIds = [], onSelect, onSourceChange, o
             height={node.source.dimensions.height}
             rotation={node.source.orientation}
             materialMode={node.source.materialMode ?? "original"}
-            material={node.material}
+            material={materialPreview?.nodeId === node.id ? { ...node.material, image: { ...node.material.image, image: materialPreview.image } } : node.material}
           />
         </group>
       ) : node.type === "part" && built ? (
@@ -110,9 +99,12 @@ function RenderNode({ asset, node, selectedIds = [], onSelect, onSourceChange, o
             onSelect?.(node.id, event.nativeEvent.shiftKey || event.nativeEvent.metaKey || event.nativeEvent.ctrlKey);
           }}
         >
-          {built.regions.map((region, index) => (
-            <MaterialSlot key={region.id} index={index} aspect={materialRegionAspect(node.source, region.id)} material={node.regionMaterials[region.id] ?? node.material} />
-          ))}
+          {built.regions.map((region, index) => {
+            const hasRegionOverride = Boolean(node.regionMaterials[region.id]);
+            const material = node.regionMaterials[region.id] ?? node.material;
+            const previewApplies = materialPreview?.nodeId === node.id && (materialPreview.regionId === region.id || materialPreview.regionId === "default" && !hasRegionOverride);
+            return <MaterialSlot key={region.id} index={index} aspect={materialRegionAspect(node.source, region.id)} material={previewApplies ? { ...material, image: { ...material.image, image: materialPreview.image } } : material} />;
+          })}
           {selectedIds.includes(node.id) && <Edges color="#ff6b35" threshold={10} />}
         </mesh>
       ) : null}
@@ -126,7 +118,7 @@ function RenderNode({ asset, node, selectedIds = [], onSelect, onSourceChange, o
         </>
       )}
       {children.map((child) => (
-        <RenderNode key={child.id} asset={asset} node={child} selectedIds={selectedIds} onSelect={onSelect} onSourceChange={onSourceChange} onBendChange={onBendChange} onManipulation={onManipulation} interactionMode={interactionMode} onTransformChange={onTransformChange} isolateIds={isolateIds} coordinateSpace={coordinateSpace} />
+        <RenderNode key={child.id} asset={asset} node={child} selectedIds={selectedIds} onSelect={onSelect} onSourceChange={onSourceChange} onBendChange={onBendChange} onManipulation={onManipulation} interactionMode={interactionMode} onTransformChange={onTransformChange} isolateIds={isolateIds} coordinateSpace={coordinateSpace} materialPreview={materialPreview} />
       ))}
       </group>
     </group>

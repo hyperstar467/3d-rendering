@@ -1,16 +1,19 @@
 "use client";
 
-import { Canvas, type ThreeEvent } from "@react-three/fiber";
+import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Html, Line, OrbitControls } from "@react-three/drei";
-import { Suspense, useMemo, useRef, type ComponentRef, type RefObject } from "react";
+import { Suspense, useEffect, useMemo, useRef, type ComponentRef, type RefObject } from "react";
 import * as THREE from "three";
+import { MappedStandardMaterial } from "@/components/MappedStandardMaterial";
 import { AssetRenderer } from "@/components/studio/AssetRenderer";
 import { useMappedTexture } from "@/components/useMappedTexture";
 import type { AssetDefinition, AssetInstance, SpaceDefinition, SurfaceSettings } from "@/studio/domain/types";
 import { getAssetBounds } from "@/studio/geometry/bounds";
-import { clampInstance } from "@/studio/space/placement";
+import { clampInstance, snapValue } from "@/studio/space/placement";
 
 type ControlsInstance = ComponentRef<typeof OrbitControls>;
+export type SpaceCameraView = "perspective" | "front" | "back" | "left" | "right" | "top" | "fit" | "selection";
+export type SpaceCameraRequest = { id: number; view: SpaceCameraView };
 
 type Props = {
   space: SpaceDefinition;
@@ -21,31 +24,24 @@ type Props = {
   onRotate: (instanceId: string, rotation: number, x: number, z: number) => void;
   onPlacementError: (message?: string) => void;
   interactionMode: "view" | "place";
+  surfacePreviews?: Partial<Record<"floor" | "back" | "left" | "right", string>>;
+  moveSnap: number;
+  rotationSnap: number;
+  onGestureStart: () => void;
+  onGestureEnd: () => void;
+  cameraRequest?: SpaceCameraRequest;
 };
 
-function SurfaceMaterial({ surface, aspect }: { surface: SurfaceSettings; aspect: number }) {
-  const texture = useMappedTexture(surface.image, surface, aspect);
+function SurfaceMaterial({ surface, aspect, previewImage }: { surface: SurfaceSettings; aspect: number; previewImage?: string }) {
+  const texture = useMappedTexture(previewImage ?? surface.image, surface, aspect);
   return (
-    <meshStandardMaterial
+    <MappedStandardMaterial
       color={surface.color}
-      map={texture}
+      texture={texture}
+      programNamespace="hustle-surface-image"
       roughness={0.76}
       metalness={0}
-      side={THREE.DoubleSide}
-      onBeforeCompile={(shader) => {
-        if (!texture) return;
-        shader.fragmentShader = shader.fragmentShader.replace(
-          "#include <map_fragment>",
-          `vec4 hustleBaseColor = diffuseColor;
-          #include <map_fragment>
-          if (vMapUv.x < 0.0 || vMapUv.x > 1.0 || vMapUv.y < 0.0 || vMapUv.y > 1.0) {
-            diffuseColor = hustleBaseColor;
-          } else {
-            diffuseColor = vec4(sampledDiffuseColor.rgb, sampledDiffuseColor.a * hustleBaseColor.a);
-          }`,
-        );
-      }}
-      customProgramCacheKey={() => texture ? "hustle-surface-image-v1" : "hustle-surface-color-v1"}
+      side={THREE.FrontSide}
     />
   );
 }
@@ -65,6 +61,58 @@ function CustomGrid({ width, depth }: { width: number; depth: number }) {
   return <lineSegments geometry={geometry}><lineBasicMaterial color="#9d9e99" transparent opacity={0.6} /></lineSegments>;
 }
 
+function CameraController({ request, space, assets, selectedId, controls }: { request?: SpaceCameraRequest; space: SpaceDefinition; assets: AssetDefinition[]; selectedId?: string; controls: RefObject<ControlsInstance | null> }) {
+  const { camera, size, invalidate } = useThree();
+  useEffect(() => {
+    if (!request) return;
+    const target = new THREE.Vector3(0, space.height / 2000, 0);
+    let horizontal = space.width / 1000;
+    let vertical = space.height / 1000;
+    let view = request.view;
+    if (view === "selection") {
+      const instance = space.instances.find((candidate) => candidate.id === selectedId);
+      const asset = assets.find((candidate) => candidate.id === instance?.assetId);
+      if (instance && asset) {
+        const bounds = getAssetBounds(asset);
+        target.set(instance.position.x / 1000, bounds.height / 2000, instance.position.z / 1000);
+        horizontal = Math.max(bounds.width, bounds.depth) / 1000;
+        vertical = bounds.height / 1000;
+      } else view = "fit";
+    }
+    const perspective = camera as THREE.PerspectiveCamera;
+    const halfFov = THREE.MathUtils.degToRad(perspective.fov || 46) / 2;
+    const aspect = Math.max(size.width / Math.max(size.height, 1), 0.1);
+    const distanceFor = (viewWidth: number, viewHeight: number) => Math.max(viewHeight / 2 / Math.tan(halfFov), viewWidth / 2 / Math.tan(halfFov) / aspect) * 1.28;
+    let distance = distanceFor(horizontal, vertical);
+    camera.up.set(0, 1, 0);
+    if (view === "top") {
+      distance = distanceFor(space.width / 1000, space.depth / 1000);
+      target.set(0, 0, 0);
+      camera.up.set(0, 0, -1);
+      camera.position.set(0, distance, 0.0001);
+    } else if (view === "front") camera.position.set(0, target.y, distance);
+    else if (view === "back") camera.position.set(0, target.y, -distance);
+    else if (view === "left") {
+      distance = distanceFor(space.depth / 1000, space.height / 1000);
+      camera.position.set(-distance, target.y, 0);
+    } else if (view === "right") {
+      distance = distanceFor(space.depth / 1000, space.height / 1000);
+      camera.position.set(distance, target.y, 0);
+    } else {
+      const span = view === "selection" ? Math.max(horizontal, vertical) : Math.max(space.width, space.depth, space.height) / 1000;
+      camera.position.copy(target).add(new THREE.Vector3(1, .78, 1).normalize().multiplyScalar(Math.max(distance, span * 1.05)));
+    }
+    camera.lookAt(target);
+    camera.updateProjectionMatrix();
+    if (controls.current) {
+      controls.current.target.copy(target);
+      controls.current.update();
+    }
+    invalidate();
+  }, [request?.id]);
+  return null;
+}
+
 function PlacedAsset({
   asset,
   instance,
@@ -76,6 +124,10 @@ function PlacedAsset({
   onRotate,
   onPlacementError,
   interactionMode,
+  moveSnap,
+  rotationSnap,
+  onGestureStart,
+  onGestureEnd,
 }: {
   asset: AssetDefinition;
   instance: AssetInstance;
@@ -87,6 +139,10 @@ function PlacedAsset({
   onRotate: (rotation: number, x: number, z: number) => void;
   onPlacementError: (message?: string) => void;
   interactionMode: "view" | "place";
+  moveSnap: number;
+  rotationSnap: number;
+  onGestureStart: () => void;
+  onGestureEnd: () => void;
 }) {
   const bounds = useMemo(() => getAssetBounds(asset), [asset]);
   const drag = useRef<{ offsetX: number; offsetZ: number } | null>(null);
@@ -101,19 +157,21 @@ function PlacedAsset({
     const hit = intersectFloor(event);
     if (!hit) return;
     drag.current = { offsetX: instance.position.x - hit.x * 1000, offsetZ: instance.position.z - hit.z * 1000 };
+    onGestureStart();
     if (event.nativeEvent.target instanceof Element) event.nativeEvent.target.setPointerCapture(event.pointerId);
     if (controls.current) controls.current.enabled = false;
   };
   const rotateDown = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
     rotateDrag.current = { clientX: event.nativeEvent.clientX, rotation: instance.rotation };
+    onGestureStart();
     if (event.nativeEvent.target instanceof Element) event.nativeEvent.target.setPointerCapture(event.pointerId);
     if (controls.current) controls.current.enabled = false;
   };
   const rotateMove = (event: ThreeEvent<PointerEvent>) => {
     if (!rotateDrag.current) return;
     event.stopPropagation();
-    const rotation = rotateDrag.current.rotation + (event.nativeEvent.clientX - rotateDrag.current.clientX) * .7;
+    const rotation = snapValue(rotateDrag.current.rotation + (event.nativeEvent.clientX - rotateDrag.current.clientX) * .7, rotationSnap);
     const placement = clampInstance(bounds, space, rotation, instance.position.x, instance.position.z);
     if (!placement.fits) return onPlacementError(placement.message);
     onPlacementError(undefined);
@@ -123,6 +181,7 @@ function PlacedAsset({
     if (!rotateDrag.current) return;
     event.stopPropagation();
     rotateDrag.current = null;
+    onGestureEnd();
     if (event.nativeEvent.target instanceof Element && event.nativeEvent.target.hasPointerCapture(event.pointerId)) event.nativeEvent.target.releasePointerCapture(event.pointerId);
     if (controls.current) controls.current.enabled = interactionMode === "view";
   };
@@ -131,7 +190,9 @@ function PlacedAsset({
     event.stopPropagation();
     const hit = intersectFloor(event);
     if (!hit) return;
-    const placement = clampInstance(bounds, space, instance.rotation, hit.x * 1000 + drag.current.offsetX, hit.z * 1000 + drag.current.offsetZ);
+    const x = snapValue(hit.x * 1000 + drag.current.offsetX, moveSnap);
+    const z = snapValue(hit.z * 1000 + drag.current.offsetZ, moveSnap);
+    const placement = clampInstance(bounds, space, instance.rotation, x, z);
     if (!placement.fits) return onPlacementError(placement.message);
     onPlacementError(undefined);
     onMove(placement.x, placement.z);
@@ -139,6 +200,7 @@ function PlacedAsset({
   const pointerUp = (event: ThreeEvent<PointerEvent>) => {
     if (!drag.current) return;
     drag.current = null;
+    onGestureEnd();
     if (event.nativeEvent.target instanceof Element && event.nativeEvent.target.hasPointerCapture(event.pointerId)) event.nativeEvent.target.releasePointerCapture(event.pointerId);
     if (controls.current) controls.current.enabled = interactionMode === "view";
   };
@@ -180,20 +242,21 @@ function SceneContents(props: Props) {
       <directionalLight position={[4, 8, 5]} intensity={2.1} />
       <mesh rotation={[-Math.PI / 2, 0, 0]} onClick={(event) => { event.stopPropagation(); props.onSelect(undefined); }}>
         <planeGeometry args={[width, depth]} />
-        <SurfaceMaterial surface={props.space.floor} aspect={width / depth} />
+        <SurfaceMaterial surface={props.space.floor} aspect={width / depth} previewImage={props.surfacePreviews?.floor} />
       </mesh>
       {props.space.gridVisible && <CustomGrid width={props.space.width} depth={props.space.depth} />}
-      {props.space.wallMode !== "none" && <mesh position={[0, height / 2, -depth / 2]}><planeGeometry args={[width, height]} /><SurfaceMaterial surface={props.space.walls.back} aspect={width / height} /></mesh>}
+      {props.space.wallMode !== "none" && <mesh position={[0, height / 2, -depth / 2]}><planeGeometry args={[width, height]} /><SurfaceMaterial surface={props.space.walls.back} aspect={width / height} previewImage={props.surfacePreviews?.back} /></mesh>}
       {props.space.wallMode === "three" && <>
-        <mesh position={[-width / 2, height / 2, 0]} rotation={[0, Math.PI / 2, 0]}><planeGeometry args={[depth, height]} /><SurfaceMaterial surface={props.space.walls.left} aspect={depth / height} /></mesh>
-        <mesh position={[width / 2, height / 2, 0]} rotation={[0, -Math.PI / 2, 0]}><planeGeometry args={[depth, height]} /><SurfaceMaterial surface={props.space.walls.right} aspect={depth / height} /></mesh>
+        <mesh position={[-width / 2, height / 2, 0]} rotation={[0, Math.PI / 2, 0]}><planeGeometry args={[depth, height]} /><SurfaceMaterial surface={props.space.walls.left} aspect={depth / height} previewImage={props.surfacePreviews?.left} /></mesh>
+        <mesh position={[width / 2, height / 2, 0]} rotation={[0, -Math.PI / 2, 0]}><planeGeometry args={[depth, height]} /><SurfaceMaterial surface={props.space.walls.right} aspect={depth / height} previewImage={props.surfacePreviews?.right} /></mesh>
       </>}
       <Suspense fallback={null}>
         {props.space.instances.map((instance) => {
           const asset = props.assets.find((candidate) => candidate.id === instance.assetId);
-          return asset ? <PlacedAsset key={instance.id} asset={asset} instance={instance} selected={props.selectedId === instance.id} space={props.space} controls={controls} interactionMode={props.interactionMode} onSelect={() => props.onSelect(instance.id)} onMove={(x, z) => props.onMove(instance.id, x, z)} onRotate={(rotation, x, z) => props.onRotate(instance.id, rotation, x, z)} onPlacementError={props.onPlacementError} /> : null;
+          return asset ? <PlacedAsset key={instance.id} asset={asset} instance={instance} selected={props.selectedId === instance.id} space={props.space} controls={controls} interactionMode={props.interactionMode} moveSnap={props.moveSnap} rotationSnap={props.rotationSnap} onGestureStart={props.onGestureStart} onGestureEnd={props.onGestureEnd} onSelect={() => props.onSelect(instance.id)} onMove={(x, z) => props.onMove(instance.id, x, z)} onRotate={(rotation, x, z) => props.onRotate(instance.id, rotation, x, z)} onPlacementError={props.onPlacementError} /> : null;
         })}
       </Suspense>
+      <CameraController request={props.cameraRequest} space={props.space} assets={props.assets} selectedId={props.selectedId} controls={controls} />
       <OrbitControls ref={controls} enabled={props.interactionMode === "view"} makeDefault target={[0, height * 0.25, 0]} minDistance={1} maxDistance={40} enableDamping dampingFactor={0.08} />
     </>
   );

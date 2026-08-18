@@ -16,9 +16,10 @@ type Props = {
   interactionMode: "view" | "place" | "geometry";
   isolateIds: string[];
   coordinateSpace: "local" | "world";
+  materialPreview?: { nodeId: string; regionId: string; image: string };
 };
 
-export function AssetScene({ asset, selectedIds, onSelect, onSourceChange, onBendChange, onTransformChange, interactionMode, isolateIds, coordinateSpace }: Props) {
+export function AssetScene({ asset, selectedIds, onSelect, onSourceChange, onBendChange, onTransformChange, interactionMode, isolateIds, coordinateSpace, materialPreview }: Props) {
   const [controlsEnabled, setControlsEnabled] = useState(true);
   return (
     <Canvas
@@ -33,7 +34,7 @@ export function AssetScene({ asset, selectedIds, onSelect, onSourceChange, onBen
       <directionalLight position={[4, 7, 5]} intensity={2.4} />
       <directionalLight position={[-3, 2, -4]} intensity={0.8} />
       <Suspense fallback={null}>
-        <AssetRenderer asset={asset} selectedIds={selectedIds} isolateIds={isolateIds} coordinateSpace={coordinateSpace} onSelect={onSelect} onSourceChange={onSourceChange} onBendChange={onBendChange} onTransformChange={onTransformChange} interactionMode={interactionMode} onManipulation={(active) => setControlsEnabled(!active)} />
+        <AssetRenderer asset={asset} selectedIds={selectedIds} isolateIds={isolateIds} coordinateSpace={coordinateSpace} materialPreview={materialPreview} onSelect={onSelect} onSourceChange={onSourceChange} onBendChange={onBendChange} onTransformChange={onTransformChange} interactionMode={interactionMode} onManipulation={(active) => setControlsEnabled(!active)} />
       </Suspense>
       <Grid
         position={[0, -0.002, 0]}
