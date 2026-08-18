@@ -1,0 +1,1 @@
+(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["object"==typeof document?document.currentScript:void 0,99833,t=>{"use strict";let o={fit:"contain",zoom:1,x:0,y:0,rotation:0};t.s(["DEFAULT_FACE_TEXTURE",0,o,"DEFAULT_TEXTURE_TRANSFORM",0,o])}]);
