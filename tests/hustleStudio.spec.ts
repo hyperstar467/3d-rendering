@@ -97,6 +97,10 @@ test("nested Outliner hierarchy, world/local transform, locks, isolate and histo
   await addNamedPart(page, "Sphere", "Part C");
   await addNamedPart(page, "Cone", "Part D");
 
+  await page.locator(".asset-root-row").click();
+  await expect(page.locator(".asset-root-row")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("heading", { name: "전체 Asset 선택" })).toBeVisible();
+
   await page.getByRole("button", { name: "Part B", exact: true }).click();
   await page.getByRole("button", { name: "Part C", exact: true }).click({ modifiers: ["Shift"] });
   await page.locator('[title="그룹"]').click();

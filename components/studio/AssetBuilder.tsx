@@ -658,7 +658,7 @@ export function AssetBuilder({ initialAsset, onBack, onSave, onAddToSpace }: Pro
           <section className="panel-section hierarchy-section">
             <div className="section-heading"><h2>Outliner / 구조</h2><span>{asset.nodes.length}</span></div>
             <label className="outliner-search"><Search /><input value={outlinerSearch} onChange={(event) => setOutlinerSearch(event.currentTarget.value)} placeholder="Part / Group 검색" /></label>
-            <button className="asset-root-row" onClick={() => setSelectedIds([])} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { const id = event.dataTransfer.getData("text/hustle-node-id"); if (id) reparent(id, null); }}><Boxes size={14} /> 전체 에셋 <span>{asset.name}</span></button>
+            <button className={`asset-root-row ${selectedIds.length ? "" : "selected"}`} aria-pressed={!selectedIds.length} onClick={() => setSelectedIds([])} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { const id = event.dataTransfer.getData("text/hustle-node-id"); if (id) reparent(id, null); }}><Boxes size={14} /> 전체 에셋 <span>{asset.name}</span></button>
             {asset.nodes.length ? <Hierarchy asset={asset} selectedIds={selectedIds} search={outlinerSearch} collapsed={collapsedIds} onSelect={selectNode} onExpand={(id) => setCollapsedIds((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onRename={(id, name) => commit((draft) => { if (!isEditLocked(id, draft.nodes)) draft.nodes = draft.nodes.map((node) => node.id === id ? { ...node, name } : node); })} onVisibility={toggleVisibility} onLock={toggleLock} onReparent={reparent} /> : <p className="empty-note">왼쪽 도구에서 첫 Part를 추가하세요.</p>}
             <div className="mini-toolbar">
               <button onClick={duplicate} disabled={!selectedIds.length} title="복제"><Copy /></button>
@@ -726,7 +726,7 @@ export function AssetBuilder({ initialAsset, onBack, onSave, onAddToSpace }: Pro
 
         <aside className="studio-panel right-panel">
           {!selected ? (
-            <div className="inspector-empty"><Move3d /><h2>{selectedIds.length > 1 ? `${selectedIds.length}개 Part 선택됨` : "선택한 요소의 속성"}</h2><p>화면이나 구조 목록에서 Part를 선택하면 실제 치수와 생성 파라미터를 수정할 수 있습니다.</p></div>
+            <div className="inspector-empty"><Move3d /><h2>{selectedIds.length > 1 ? `${selectedIds.length}개 Node 선택됨` : "전체 Asset 선택"}</h2><p>{selectedIds.length > 1 ? "공통 Transform gizmo와 구조 작업이 선택된 Part와 Group에 함께 적용됩니다." : "Asset 이름과 설명은 상단과 왼쪽 패널에서 수정하고, Part 또는 Group을 선택하면 세부 속성을 편집할 수 있습니다."}</p></div>
           ) : (
             <>
               <section className="panel-section">
