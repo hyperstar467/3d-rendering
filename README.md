@@ -1,68 +1,100 @@
-# PawPlan — 펫페어 3D 공간 플래너
+# Hustle 3D Studio
 
-실측 부스와 집기를 브라우저에서 설계하는 로컬 우선 3D 공간 플래너입니다. 외부 AI API나 API 키 없이 기본 도형, 면별 사진 Box, 직접 업로드한 GLB를 모두 사용할 수 있습니다.
+현실에 있거나 머릿속으로 구상한 물체를 Part 단위로 만들고, 변형하고, 조립하고, 디자인한 뒤 실제 크기의 공간에 배치하는 **범용 DIY 3D Visual Planning Studio**입니다. 특정 제품 카테고리를 전제로 하지 않으며 모든 결과를 generic `AssetDefinition`과 `AssetInstance`로 다룹니다.
 
-미리 사용하기: https://hyperstar467.github.io/3d-rendering/
+## 현재 가능한 흐름
 
-## 주요 기능
+1. **3D 오브젝트 만들기**에서 실제 mm 치수의 Part를 생성합니다.
+2. Primitive, Sketch → Extrude, Path → Sweep, Profile → Revolve 중 생성 원리를 선택합니다.
+3. 뷰포트 control point와 Bend gizmo로 형상을 직접 조작하고 Inspector에서 수치를 정밀 조정합니다.
+4. 중첩 Group, 이동, 회전, 정렬, 복제, hide, transform/edit lock, isolate로 Assembly를 구성합니다.
+5. 전체 또는 material region별 색상·이미지·roughness·metalness·opacity를 적용합니다.
+6. Asset을 `내 오브젝트`에 저장하고 동일한 AssetDefinition으로 여러 AssetInstance를 공간에 배치합니다.
+7. `.hustle3d` 프로젝트로 내보내면 source parameter, hierarchy, 이미지, GLB, 공간 설정이 함께 저장됩니다.
 
-- 부스 W/D/H를 mm 단위로 입력한 뒤 `적용` 버튼으로 일괄 반영
-- 빈 부스에서 시작하고 기본 공간 기획 집기를 실측값과 색상으로 추가
-- 사진 집기: 정면·좌측·우측·후면 사진을 정확한 W/D/H Box 각 면에 적용
-- 벽 3면·바닥·사진 집기 면별 `contain`/`cover`, zoom, X/Y position, rotation 조절과 실시간 3D preview
-- GLB 직접 업로드, X/Y/Z 방향 보정, 원본 재질/단색 override, 공통 scaling utility와 최종 BoundingBox 검수
-- 선택 집기 드래그·스냅·회전·크기 변경·복제와 물리 `X`/`Delete`/Mac `Backspace` 삭제
-- 색상 피커와 texture 슬라이더를 조작하는 동안 3D에 즉시 반영
-- 회전된 footprint 기준 부스 경계 보정과 부스보다 큰 집기 오류 표시
-- 부스 영역에만 표시되는 500mm custom grid
-- 바닥과 후면·좌측·우측 벽을 각각 색상 또는 사용자 이미지로 마감
-- 진회색·연회색 카펫, 콘크리트, 회색·백색 타일, 우드 기본 바닥재
-- 업로드 자산을 모두 포함하는 ZIP 기반 `.pawplan` 프로젝트 저장·불러오기
-- 큰 프로젝트의 ZIP 생성·복원을 메인 UI 밖의 Web Worker에서 처리
+## Modeling tools
 
-## 로컬 실행
+- Primitive: Box, Cylinder, Sphere, Cone, Rod, Bar
+- Sketch: Rectangle, Circle, Point/Line polygon, Bezier closed curve
+- Extrude: Sketch source와 depth를 보존하는 실제 `ExtrudeGeometry`
+- Path / Sweep: linear 또는 Catmull-Rom path + 원형/사각형/얇은 사각형 단면
+- Revolve: 2D profile, angle, segments를 보존하는 실제 `LatheGeometry`
+- Bend: axis, angle, radius, range를 보존하는 비파괴 modifier
+- GLB import: 고급 기능. orientation group과 measurement scale group을 분리해 입력 W/D/H에 맞춤
 
-Node.js 20.9 이상과 pnpm이 필요합니다. 환경 변수나 외부 서비스 계정은 필요하지 않습니다.
+## 명확한 interaction mode
+
+- **보기**: Orbit / Pan / Zoom만 동작
+- **배치**: Part/Group transform gizmo 또는 Space의 AssetInstance drag/rotation만 동작
+- **형상 편집**: Sketch, Bezier, Sweep path, Revolve profile, Bend handle만 동작
+
+Geometry handle을 움직이는 동안 camera와 object placement는 비활성화됩니다. Lock 상태는 interaction mode보다 우선합니다.
+
+## 단위와 좌표
+
+- 사용자 입력과 project source data: **millimeter**
+- 각도: **degree**
+- Three.js 내부: **1 unit = 1 meter**
+
+mm → meter 변환은 Geometry 생성/렌더 경계에서 수행합니다. GLB의 orientation과 world-space size scaling은 분리된 transform group에서 처리됩니다.
+
+## Architecture
+
+```text
+studio/
+├── domain/       Asset, Node, Group, lock, pivot, hierarchy, project schema
+├── geometry/     UI와 분리된 geometry operation과 bounding 계산
+├── commands/     immutable undo / redo history
+├── persistence/  local Asset Library와 Worker 기반 portable archive
+└── space/        AssetInstance boundary / placement
+
+components/studio/
+├── AssetBuilder             Universal Object Builder
+├── AssetRenderer            AssetDefinition 공통 renderer
+├── DirectManipulationGizmos Curve / Bend / Transform handle
+├── SpaceStudio              실측 공간 편집기
+└── StudioApp                Asset Library와 project workflow
+```
+
+각 `AssetPartNode`는 최종 mesh만 저장하지 않고 `GeometrySource`, modifier, material region을 보존합니다. 새 operation은 `GeometrySource` union과 `buildGeometry` dispatcher에 추가하고 전용 Inspector/gizmo를 연결할 수 있습니다. 공간에는 내부 Part가 아닌 `AssetInstance`만 배치됩니다.
+
+## Portable project
+
+`.hustle3d`는 ZIP 기반이며 다음 구조를 사용합니다.
+
+```text
+project.json
+assets/
+  objects/...
+  space/...
+```
+
+이미지와 GLB data URL은 Web Worker에서 asset file로 분리되고 import 시 복원됩니다. 큰 archive의 zip/unzip은 UI thread에서 실행하지 않습니다.
+
+## 실행
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-브라우저에서 `http://localhost:3000`을 엽니다.
-
-## 프로젝트 파일
-
-`.pawplan`은 다음 구조의 ZIP 파일입니다.
-
-```text
-project.json
-assets/
-  booth/
-  fixtures/
-```
-
-`project.json`에는 부스·집기 설정과 asset 경로가 들어가고, 사용자가 올린 GLB·집기 사진·벽 이미지·바닥 이미지는 `assets/`에 함께 저장됩니다. 따라서 별도 서버나 원격 URL 없이 파일 하나로 다른 브라우저에서 프로젝트를 복원할 수 있습니다. 이전 JSON 프로젝트도 불러올 수 있습니다.
-
-벽/바닥 이미지는 현재 부스 비율로 미리 늘려 저장하지 않습니다. 원본 이미지와 각 면의 fit/zoom/position/rotation 설정을 저장하므로, 부스 W/D/H를 바꾼 뒤에도 원본 종횡비를 유지해 다시 렌더링됩니다.
-
-## 실측과 좌표 단위
-
-- 모든 UI 입력과 프로젝트 데이터: `mm`
-- Three.js 내부 좌표: `1 unit = 1 meter`
-- 렌더링 경계에서 mm를 meter로 변환
-- GLB는 `Orientation group`과 `Scale group`을 분리하고, 방향 보정 후의 world-space BoundingBox를 기준으로 목표 W/D/H를 맞춤
-
-사진 집기는 입력 W/D/H로 Box geometry를 직접 만들기 때문에 외곽 실측이 그대로 유지됩니다. GLB는 `lib/modelTransform.ts`의 공통 함수를 preview와 실제 부스가 함께 사용합니다.
+기본 개발 주소는 [http://localhost:3000](http://localhost:3000)입니다. 별도 Python, GPU, 서버, API key 또는 외부 AI 서비스가 필요하지 않습니다.
 
 ## 검증
 
 ```bash
 pnpm typecheck
-pnpm build
 pnpm test:unit
-pnpm exec playwright install chromium
+pnpm build
 pnpm test:e2e
 ```
 
-`test:e2e`는 production build를 띄운 뒤 Playwright Chromium에서 키보드 삭제, live color, surface 원본 비율, 사진 UV 연속 입력, GLB 90° 실측, boundary clamp, portable 프로젝트 왕복을 검증합니다. 기준 시나리오는 6000 × 4000 × 2500mm 부스와 1200 × 450 × 1800mm 집기입니다.
+단위 테스트는 geometry 생성, Bend 변형, GLB 실측 scaling, placement boundary, texture aspect, 임의 깊이 hierarchy, lock 상속, world-space 보존 reparent/ungroup을 검사합니다. E2E 테스트는 브라우저에서 생성 → 형상 편집 → 재질 → Group → 저장 → Space 배치 흐름을 검사합니다.
+
+## GitHub Pages
+
+정적 export는 `GITHUB_PAGES=true pnpm build`로 생성할 수 있으며 base path는 `/3d-rendering`입니다. 공개 preview는 [Hustle 3D Studio](https://hyperstar467.github.io/3d-rendering/)에서 확인합니다.
+
+## 범위
+
+Foundation은 Primitive, Sketch/Extrude, Path/Sweep, Revolve, Bend, hierarchy/assembly, material/image, Asset Library, Space placement를 우선합니다. Boolean, Loft, cloth simulation, sculpting, vertex editor, 제조 CAD constraint와 AI 3D 생성은 현재 범위가 아닙니다.

@@ -3,14 +3,14 @@
 import { useEffect, useState } from "react";
 import { useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import type { TextureTransformSettings } from "@/lib/types";
+import type { ImageTransform } from "@/studio/domain/types";
 import { getTextureUvTransform } from "@/lib/textureTransform";
 
 type LoadedTexture = { texture: THREE.Texture; imageAspect: number };
 
 export function useMappedTexture(
   image: string | undefined,
-  settings: TextureTransformSettings | undefined,
+  settings: ImageTransform | undefined,
   surfaceAspect: number,
 ) {
   const [loaded, setLoaded] = useState<LoadedTexture | null>(null);

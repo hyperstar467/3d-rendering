@@ -6,6 +6,7 @@
 
 # next.js
 /.next/
+/.next-build/
 /out/
 
 # production
@@ -22,6 +23,9 @@ yarn-error.log*
 pnpm-debug.log*
 /test-results/
 /playwright-report/
+/:memory:.ses
+# Previous local prototype environment is kept off-repository and never executed.
+/local_ai/
 
 # environment variables
 .env*

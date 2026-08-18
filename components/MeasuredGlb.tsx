@@ -6,18 +6,21 @@ import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import type { ModelDimensions } from "@/lib/modelTransform";
 import { prepareModelToDimensions } from "@/lib/modelTransform";
-import type { GlbMaterialMode, ModelRotation } from "@/lib/types";
+import type { EulerDegrees, MaterialStyle } from "@/studio/domain/types";
+import { useMappedTexture } from "@/components/useMappedTexture";
 
 type Props = ModelDimensions & {
   modelUrl: string;
-  rotation: ModelRotation;
-  materialMode?: GlbMaterialMode;
+  rotation: EulerDegrees;
+  materialMode?: "original" | "override";
   color?: string;
+  material?: MaterialStyle;
   onMeasured?: (result: ModelDimensions & { matches: boolean }) => void;
 };
 
-export function MeasuredGlb({ materialMode = "original", color = "#d9d2c7", onMeasured, ...props }: Props) {
+export function MeasuredGlb({ materialMode = "original", color = "#d9d2c7", material, onMeasured, ...props }: Props) {
   const gltf = useGLTF(props.modelUrl);
+  const mappedTexture = useMappedTexture(material?.image.image, material?.image, 1);
   const invalidate = useThree((state) => state.invalidate);
   const prepared = useMemo(
     () => prepareModelToDimensions(gltf.scene, props, props.rotation),
@@ -31,10 +34,15 @@ export function MeasuredGlb({ materialMode = "original", color = "#d9d2c7", onMe
   useEffect(() => () => overrideMaterial.dispose(), [overrideMaterial]);
 
   useLayoutEffect(() => {
-    overrideMaterial.color.set(color);
+    overrideMaterial.color.set(material?.color ?? color);
+    overrideMaterial.roughness = material?.roughness ?? 0.62;
+    overrideMaterial.metalness = material?.metalness ?? 0.04;
+    overrideMaterial.opacity = material?.opacity ?? 1;
+    overrideMaterial.transparent = (material?.opacity ?? 1) < 1;
+    overrideMaterial.map = mappedTexture;
     overrideMaterial.needsUpdate = true;
     invalidate();
-  }, [color, invalidate, overrideMaterial]);
+  }, [color, invalidate, mappedTexture, material?.color, material?.metalness, material?.opacity, material?.roughness, overrideMaterial]);
 
   useLayoutEffect(() => {
     const originals = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();

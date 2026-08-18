@@ -1,5 +1,5 @@
-import { Planner } from "@/components/Planner";
+import { StudioApp } from "@/components/studio/StudioApp";
 
 export default function Home() {
-  return <Planner />;
+  return <StudioApp />;
 }

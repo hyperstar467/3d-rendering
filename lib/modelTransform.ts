@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { ModelRotation } from "@/lib/types";
+import type { EulerDegrees } from "@/studio/domain/types";
 
 export type ModelDimensions = { width: number; depth: number; height: number };
 
@@ -32,7 +32,7 @@ export function dimensionsMatchTarget(measured: ModelDimensions, target: ModelDi
 export function prepareModelToDimensions(
   source: THREE.Object3D,
   target: ModelDimensions,
-  rotation: ModelRotation,
+  rotation: EulerDegrees,
 ): PreparedModel {
   const model = source.clone(true);
   model.traverse((child) => {

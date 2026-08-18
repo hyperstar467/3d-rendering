@@ -1,4 +1,4 @@
-import type { TextureTransformSettings } from "@/lib/types";
+import type { ImageTransform } from "@/studio/domain/types";
 
 export type TextureUvTransform = {
   repeatX: number;
@@ -11,7 +11,7 @@ export type TextureUvTransform = {
 export function getTextureUvTransform(
   surfaceAspect: number,
   imageAspect: number,
-  settings: Pick<TextureTransformSettings, "fit" | "zoom" | "x" | "y" | "rotation">,
+  settings: Pick<ImageTransform, "fit" | "zoom" | "x" | "y" | "rotation">,
 ): TextureUvTransform {
   const safeSurfaceAspect = Math.max(surfaceAspect, 0.0001);
   const safeImageAspect = Math.max(imageAspect, 0.0001);
