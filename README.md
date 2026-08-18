@@ -1,54 +1,53 @@
 # PawPlan — 펫페어 3D 공간 플래너
 
-부스 실측값과 집기 실측값을 기준으로 펫페어 전시 공간을 브라우저에서 설계하는 Next.js 애플리케이션입니다. 사진 1~4장을 Meshy Multi-Image-to-3D API로 변환하고, 반환된 GLB를 사용자가 입력한 W/D/H에 맞게 보정해 부스 안에 배치합니다.
+실측 부스와 집기를 브라우저에서 설계하는 로컬 우선 3D 공간 플래너입니다. 외부 AI API나 API 키 없이 기본 도형, 면별 사진 Box, 직접 업로드한 GLB를 모두 사용할 수 있습니다.
 
-## 구현된 기능
+## 주요 기능
 
-- 부스 가로·깊이·높이(mm)를 자유롭게 입력하고 적용 버튼으로 일괄 반영
-- 0/1/3면 벽, 벽·바닥 색상과 면 규격에 즉시 맞춰지는 사용자 이미지 마감
+- 부스 W/D/H를 mm 단위로 입력한 뒤 `적용` 버튼으로 일괄 반영
+- 빈 부스에서 시작하고 기본 공간 기획 집기를 실측값과 색상으로 추가
+- 사진 집기: 정면·좌측·우측·후면 사진을 정확한 W/D/H Box 각 면에 적용
+- 면별 `contain`/`cover`, zoom, X/Y position, rotation 조절과 별도 3D preview
+- GLB 직접 업로드, X/Y/Z 방향 보정, 공통 실측 scaling utility와 최종 BoundingBox 검수
+- 선택 집기 드래그·스냅·회전·크기 변경·복제와 `X`/`Delete` 삭제
+- 회전된 footprint 기준 부스 경계 보정과 부스보다 큰 집기 오류 표시
+- 부스 영역에만 표시되는 500mm custom grid
+- 바닥과 후면·좌측·우측 벽을 각각 색상 또는 사용자 이미지로 마감
 - 진회색·연회색 카펫, 콘크리트, 회색·백색 타일, 우드 기본 바닥재
-- Three.js 기반 원근/탑/정면 뷰와 켜고 끌 수 있는 실측 그리드
-- 집기 없는 빈 부스에서 시작
-- 집기 선택, 바닥 드래그, 스냅, 위치·회전·크기 편집, 복제 및 `X`/`Delete` 단축키 삭제
-- 진열대·선반·테이블·카운터·배너·쇼케이스·포디움·의자·스툴·소파·행거/랙·파티션의 색상과 실측값 지정 후 추가
-- GLB 직접 업로드 및 브라우저 미리보기
-- 동일 집기 사진 1~4장 → Meshy AI → GLB 생성 및 진행률 표시
-- 생성된 GLB를 부스에 넣기 전 360° 검수하고 이름·분류·실측 크기·X/Y/Z 방향 보정
-- GLB 바운딩 박스를 분석해 입력한 W/D/H(mm)에 X/Y/Z축 스케일 보정
-- 프로젝트 JSON 저장·불러오기
-- Meshy API 키를 서버 라우트에서만 사용
+- 업로드 자산을 모두 포함하는 ZIP 기반 `.pawplan` 프로젝트 저장·불러오기
 
 ## 로컬 실행
 
-Node.js 20.9 이상과 pnpm이 필요합니다.
+Node.js 20.9 이상과 pnpm이 필요합니다. 환경 변수나 외부 서비스 계정은 필요하지 않습니다.
 
 ```bash
 pnpm install
-cp .env.example .env.local
-# .env.local에 MESHY_API_KEY 입력
 pnpm dev
 ```
 
-브라우저에서 `http://localhost:3000`을 엽니다. Meshy 키가 없어도 기본 도형과 직접 GLB 업로드를 포함한 편집기 기능은 사용할 수 있습니다.
+브라우저에서 `http://localhost:3000`을 엽니다.
 
-## 환경 변수
+## 프로젝트 파일
 
-```env
-MESHY_API_KEY=your_secret_key
+`.pawplan`은 다음 구조의 ZIP 파일입니다.
+
+```text
+project.json
+assets/
+  booth/
+  fixtures/
 ```
 
-`MESHY_API_KEY`에 `NEXT_PUBLIC_` 접두사를 붙이지 마세요. `/api/meshy/tasks`와 `/api/meshy/tasks/[taskId]` 서버 라우트만 이 값을 읽습니다.
+`project.json`에는 부스·집기 설정과 asset 경로가 들어가고, 사용자가 올린 GLB·집기 사진·벽 이미지·바닥 이미지는 `assets/`에 함께 저장됩니다. 따라서 별도 서버나 원격 URL 없이 파일 하나로 다른 브라우저에서 프로젝트를 복원할 수 있습니다. 이전 JSON 프로젝트도 불러올 수 있습니다.
 
-## API 흐름
+## 실측과 좌표 단위
 
-1. 브라우저가 사진을 데이터 URI로 변환해 `POST /api/meshy/tasks`로 전송합니다.
-2. 서버가 Meshy `POST /openapi/v1/multi-image-to-3d`를 호출합니다.
-3. 브라우저가 `GET /api/meshy/tasks/:taskId`를 폴링합니다.
-4. 완료된 GLB URL을 React Three Fiber가 불러오고 실측 W/D/H로 보정합니다.
+- 모든 UI 입력과 프로젝트 데이터: `mm`
+- Three.js 내부 좌표: `1 unit = 1 meter`
+- 렌더링 경계에서 mm를 meter로 변환
+- GLB는 `Orientation group`과 `Scale group`을 분리하고, 방향 보정 후의 world-space BoundingBox를 기준으로 목표 W/D/H를 맞춤
 
-## 배포 메모
-
-Vercel에 배포할 때 프로젝트 환경 변수에 `MESHY_API_KEY`를 추가하면 됩니다. Meshy가 반환하는 자산 URL은 만료될 수 있으므로, 장기 프로젝트 저장이 필요한 운영 버전에서는 생성 완료 직후 GLB를 S3/R2/Supabase Storage 같은 영구 오브젝트 스토리지로 복사하는 서버 작업을 추가해야 합니다. 현재 MVP의 JSON 저장은 원격 GLB URL을 보존하지만, 브라우저에서 직접 올린 `blob:` URL은 세션 전용이라 저장 파일에서 제외됩니다.
+사진 집기는 입력 W/D/H로 Box geometry를 직접 만들기 때문에 외곽 실측이 그대로 유지됩니다. GLB는 `lib/modelTransform.ts`의 공통 함수를 preview와 실제 부스가 함께 사용합니다.
 
 ## 검증
 
@@ -56,3 +55,5 @@ Vercel에 배포할 때 프로젝트 환경 변수에 `MESHY_API_KEY`를 추가�
 pnpm typecheck
 pnpm build
 ```
+
+브라우저 검증 시 권장 기준 시나리오는 6000 × 4000 × 2500mm 부스와 1200 × 450 × 1800mm 집기입니다.

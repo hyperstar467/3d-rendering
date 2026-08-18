@@ -1,5 +1,6 @@
 # dependencies
 /node_modules
+/.pnpm-store/
 /.pnp
 .pnp.*
 
@@ -22,7 +23,6 @@ pnpm-debug.log*
 
 # environment variables
 .env*
-!.env.example
 
 # vercel
 .vercel

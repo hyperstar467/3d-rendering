@@ -1,4 +1,5 @@
 export type WallMode = "back" | "three" | "none";
+export type WallSide = "back" | "left" | "right";
 export type ViewPreset = "perspective" | "top" | "front";
 export type FloorMaterial = "dark-carpet" | "light-carpet" | "concrete" | "gray-tile" | "white-tile" | "wood" | "custom";
 export type FixtureCategory =
@@ -16,6 +17,19 @@ export type FixtureCategory =
   | "banner"
   | "custom";
 
+export type FixtureFace = "front" | "left" | "right" | "back";
+export type TextureFit = "contain" | "cover";
+export type ModelRotation = { x: number; y: number; z: number };
+
+export type FaceTextureSettings = {
+  image?: string;
+  fit: TextureFit;
+  zoom: number;
+  x: number;
+  y: number;
+  rotation: number;
+};
+
 export type BoothSettings = {
   width: number;
   depth: number;
@@ -26,7 +40,7 @@ export type BoothSettings = {
   floorMaterial: FloorMaterial;
   showGrid: boolean;
   floorImage?: string;
-  wallImage?: string;
+  wallImages: Partial<Record<WallSide, string>>;
 };
 
 export type Fixture = {
@@ -41,24 +55,26 @@ export type Fixture = {
   rotation: number;
   color: string;
   modelUrl?: string;
-  thumbnailUrl?: string;
-  source?: "primitive" | "meshy" | "upload";
-  modelRotation?: { x: number; y: number; z: number };
+  source: "primitive" | "photo" | "upload";
+  modelRotation?: ModelRotation;
+  faceTextures?: Partial<Record<FixtureFace, FaceTextureSettings>>;
 };
 
+export type AssetManifest = Record<string, { mimeType: string }>;
+
 export type ProjectData = {
-  version: 1;
+  version: 2;
   name: string;
   booth: BoothSettings;
   fixtures: Fixture[];
   savedAt: string;
+  assets?: AssetManifest;
 };
 
-export type MeshyTask = {
-  id: string;
-  status: "PENDING" | "IN_PROGRESS" | "SUCCEEDED" | "FAILED" | "EXPIRED" | string;
-  progress: number;
-  model_urls?: { glb?: string };
-  thumbnail_url?: string;
-  task_error?: { message?: string };
+export const DEFAULT_FACE_TEXTURE: FaceTextureSettings = {
+  fit: "contain",
+  zoom: 1,
+  x: 0,
+  y: 0,
+  rotation: 0,
 };

@@ -5,6 +5,8 @@ import { Canvas, type ThreeEvent, useThree } from "@react-three/fiber";
 import { ContactShadows, Html, OrbitControls, useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import type { BoothSettings, Fixture, FloorMaterial, ViewPreset } from "@/lib/types";
+import { FixtureBox } from "@/components/FixtureBox";
+import { prepareModelToDimensions } from "@/lib/modelTransform";
 
 type Props = {
   booth: BoothSettings;
@@ -185,12 +187,69 @@ function CameraDirector({ view, booth }: { view: ViewPreset; booth: BoothSetting
   return null;
 }
 
+function BoothGrid({ width, depth }: { width: number; depth: number }) {
+  const geometry = useMemo(() => {
+    const points: number[] = [];
+    const spacing = 0.5;
+    const halfWidth = width / 2;
+    const halfDepth = depth / 2;
+
+    for (let x = -halfWidth; x <= halfWidth + 0.0001; x += spacing) {
+      const current = Math.min(halfWidth, x);
+      points.push(current, 0, -halfDepth, current, 0, halfDepth);
+    }
+    if (Math.abs(width / spacing - Math.round(width / spacing)) > 0.0001) {
+      points.push(halfWidth, 0, -halfDepth, halfWidth, 0, halfDepth);
+    }
+    for (let z = -halfDepth; z <= halfDepth + 0.0001; z += spacing) {
+      const current = Math.min(halfDepth, z);
+      points.push(-halfWidth, 0, current, halfWidth, 0, current);
+    }
+    if (Math.abs(depth / spacing - Math.round(depth / spacing)) > 0.0001) {
+      points.push(-halfWidth, 0, halfDepth, halfWidth, 0, halfDepth);
+    }
+
+    const next = new THREE.BufferGeometry();
+    next.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
+    return next;
+  }, [depth, width]);
+
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  return (
+    <lineSegments geometry={geometry} position={[0, 0.006, 0]}>
+      <lineBasicMaterial color="#c7b9a7" transparent opacity={0.72} />
+    </lineSegments>
+  );
+}
+
+function WallPanel({
+  image,
+  color,
+  width,
+  height,
+  position,
+  rotation,
+}: {
+  image?: string;
+  color: string;
+  width: number;
+  height: number;
+  position: [number, number, number];
+  rotation?: [number, number, number];
+}) {
+  const texture = useSurfaceTexture({ image, color, repeatX: 1, repeatY: 1 });
+  return (
+    <mesh position={position} rotation={rotation} receiveShadow castShadow>
+      <planeGeometry args={[width, height]} />
+      <meshStandardMaterial color={texture ? "#ffffff" : color} map={texture ?? undefined} roughness={0.86} side={THREE.DoubleSide} />
+    </mesh>
+  );
+}
+
 function BoothShell({ booth }: { booth: BoothSettings }) {
   const width = booth.width / 1000;
   const depth = booth.depth / 1000;
   const height = booth.height / 1000;
-  const thickness = 0.045;
-  const divisions = Math.max(4, Math.round(Math.max(width, depth) / 0.5));
   const floorTexture = useSurfaceTexture({
     image: booth.floorImage,
     material: booth.floorMaterial,
@@ -198,14 +257,7 @@ function BoothShell({ booth }: { booth: BoothSettings }) {
     repeatX: Math.max(1, width),
     repeatY: Math.max(1, depth),
   });
-  const wallTexture = useSurfaceTexture({
-    image: booth.wallImage,
-    color: booth.wallColor,
-    repeatX: 1,
-    repeatY: 1,
-  });
   const floorSurfaceColor = floorTexture ? "#ffffff" : booth.floorColor;
-  const wallSurfaceColor = wallTexture ? "#ffffff" : booth.wallColor;
 
   return (
     <group>
@@ -213,28 +265,14 @@ function BoothShell({ booth }: { booth: BoothSettings }) {
         <planeGeometry args={[width, depth]} />
         <meshStandardMaterial color={floorSurfaceColor} map={floorTexture ?? undefined} roughness={0.82} />
       </mesh>
-      {booth.showGrid && (
-        <gridHelper
-          args={[Math.max(width, depth), divisions, "#b7aa96", "#d9d0c4"]}
-          position={[0, 0.006, 0]}
-        />
-      )}
+      {booth.showGrid && <BoothGrid width={width} depth={depth} />}
       {booth.wallMode !== "none" && (
-        <mesh position={[0, height / 2, -depth / 2]} receiveShadow castShadow>
-          <boxGeometry args={[width, height, thickness]} />
-          <meshStandardMaterial color={wallSurfaceColor} map={wallTexture ?? undefined} roughness={0.86} />
-        </mesh>
+        <WallPanel image={booth.wallImages.back} color={booth.wallColor} width={width} height={height} position={[0, height / 2, -depth / 2]} />
       )}
       {booth.wallMode === "three" && (
         <>
-          <mesh position={[-width / 2, height / 2, 0]} receiveShadow castShadow>
-            <boxGeometry args={[thickness, height, depth]} />
-            <meshStandardMaterial color={wallSurfaceColor} map={wallTexture ?? undefined} roughness={0.86} />
-          </mesh>
-          <mesh position={[width / 2, height / 2, 0]} receiveShadow castShadow>
-            <boxGeometry args={[thickness, height, depth]} />
-            <meshStandardMaterial color={wallSurfaceColor} map={wallTexture ?? undefined} roughness={0.86} />
-          </mesh>
+          <WallPanel image={booth.wallImages.left} color={booth.wallColor} width={depth} height={height} position={[-width / 2, height / 2, 0]} rotation={[0, Math.PI / 2, 0]} />
+          <WallPanel image={booth.wallImages.right} color={booth.wallColor} width={depth} height={height} position={[width / 2, height / 2, 0]} rotation={[0, -Math.PI / 2, 0]} />
         </>
       )}
     </group>
@@ -315,7 +353,7 @@ function PrimitiveFixture({ fixture }: { fixture: Fixture }) {
     const seatHeight = h * 0.42;
     return (
       <group>
-        <mesh position={[0, seatHeight / 2, 0.02]} castShadow receiveShadow>
+        <mesh position={[0, seatHeight / 2, 0]} castShadow receiveShadow>
           <boxGeometry args={[w, seatHeight, d * 0.82]} />
           {material}
         </mesh>
@@ -380,7 +418,7 @@ function PrimitiveFixture({ fixture }: { fixture: Fixture }) {
           {material}
         </mesh>
         <mesh position={[0, footHeight / 2, 0]} receiveShadow>
-          <boxGeometry args={[Math.min(w, w * 0.65), footHeight, Math.max(d, 0.36)]} />
+          <boxGeometry args={[w * 0.65, footHeight, d]} />
           <meshStandardMaterial color="#444947" roughness={0.68} />
         </mesh>
       </group>
@@ -388,14 +426,15 @@ function PrimitiveFixture({ fixture }: { fixture: Fixture }) {
   }
 
   if (fixture.category === "plinth") {
+    const capHeight = Math.min(0.024, h * 0.08);
     return (
       <group>
-        <mesh position={[0, h / 2, 0]} castShadow receiveShadow>
-          <boxGeometry args={[w, h, d]} />
+        <mesh position={[0, (h - capHeight) / 2, 0]} castShadow receiveShadow>
+          <boxGeometry args={[w, h - capHeight, d]} />
           {material}
         </mesh>
-        <mesh position={[0, h + 0.012, 0]} castShadow>
-          <boxGeometry args={[w * 1.04, 0.024, d * 1.04]} />
+        <mesh position={[0, h - capHeight / 2, 0]} castShadow>
+          <boxGeometry args={[w, capHeight, d]} />
           <meshStandardMaterial color={fixture.color} roughness={0.4} />
         </mesh>
       </group>
@@ -449,39 +488,16 @@ function PrimitiveFixture({ fixture }: { fixture: Fixture }) {
 
 function GlbFixture({ fixture }: { fixture: Fixture }) {
   const gltf = useGLTF(fixture.modelUrl!);
-  const prepared = useMemo(() => {
-    const model = gltf.scene.clone(true);
-    model.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-      }
-    });
+  const prepared = useMemo(
+    () => prepareModelToDimensions(
+      gltf.scene,
+      { width: fixture.width, depth: fixture.depth, height: fixture.height },
+      fixture.modelRotation ?? { x: 0, y: 0, z: 0 },
+    ),
+    [fixture.depth, fixture.height, fixture.modelRotation?.x, fixture.modelRotation?.y, fixture.modelRotation?.z, fixture.width, gltf.scene],
+  );
 
-    const orientedModel = new THREE.Group();
-    orientedModel.add(model);
-    const rotation = fixture.modelRotation ?? { x: 0, y: 0, z: 0 };
-    orientedModel.rotation.set(
-      THREE.MathUtils.degToRad(rotation.x),
-      THREE.MathUtils.degToRad(rotation.y),
-      THREE.MathUtils.degToRad(rotation.z),
-    );
-
-    const initialBox = new THREE.Box3().setFromObject(orientedModel);
-    const size = initialBox.getSize(new THREE.Vector3());
-    orientedModel.scale.set(
-      fixture.width / 1000 / Math.max(size.x, 0.0001),
-      fixture.height / 1000 / Math.max(size.y, 0.0001),
-      fixture.depth / 1000 / Math.max(size.z, 0.0001),
-    );
-
-    const scaledBox = new THREE.Box3().setFromObject(orientedModel);
-    const center = scaledBox.getCenter(new THREE.Vector3());
-    orientedModel.position.set(-center.x, -scaledBox.min.y, -center.z);
-    return orientedModel;
-  }, [fixture.depth, fixture.height, fixture.modelRotation, fixture.width, gltf.scene]);
-
-  return <primitive object={prepared} />;
+  return <primitive object={prepared.object} />;
 }
 
 function FixtureObject({
@@ -491,6 +507,7 @@ function FixtureObject({
   snap,
   onSelect,
   onMove,
+  onDragging,
 }: {
   fixture: Fixture;
   booth: BoothSettings;
@@ -498,16 +515,27 @@ function FixtureObject({
   snap: number;
   onSelect: (id: string) => void;
   onMove: (id: string, x: number, z: number) => void;
+  onDragging: (dragging: boolean) => void;
 }) {
   const dragging = useRef(false);
   const pointerId = useRef<number | null>(null);
   const dragPlane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), []);
   const intersection = useMemo(() => new THREE.Vector3(), []);
+  const dragOffset = useMemo(() => new THREE.Vector3(), []);
+  const controls = useThree((state) => state.controls) as { enabled: boolean } | null;
+
+  useEffect(() => () => {
+    if (controls) controls.enabled = true;
+  }, [controls]);
 
   function handlePointerDown(event: ThreeEvent<PointerEvent>) {
     event.stopPropagation();
+    if (!event.ray.intersectPlane(dragPlane, intersection)) return;
     dragging.current = true;
     pointerId.current = event.pointerId;
+    dragOffset.set(fixture.x / 1000 - intersection.x, 0, fixture.z / 1000 - intersection.z);
+    if (controls) controls.enabled = false;
+    onDragging(true);
     const target = event.target as (EventTarget & { setPointerCapture?: (id: number) => void }) | null;
     target?.setPointerCapture?.(event.pointerId);
     onSelect(fixture.id);
@@ -524,8 +552,10 @@ function FixtureObject({
     const halfZ = (Math.abs(Math.sin(radians)) * fixture.width + Math.abs(Math.cos(radians)) * fixture.depth) / 2000;
     const maxX = Math.max(0, booth.width / 2000 - halfX);
     const maxZ = Math.max(0, booth.depth / 2000 - halfZ);
-    const x = THREE.MathUtils.clamp(Math.round(intersection.x / snapMeters) * snapMeters, -maxX, maxX);
-    const z = THREE.MathUtils.clamp(Math.round(intersection.z / snapMeters) * snapMeters, -maxZ, maxZ);
+    const desiredX = intersection.x + dragOffset.x;
+    const desiredZ = intersection.z + dragOffset.z;
+    const x = THREE.MathUtils.clamp(Math.round(desiredX / snapMeters) * snapMeters, -maxX, maxX);
+    const z = THREE.MathUtils.clamp(Math.round(desiredZ / snapMeters) * snapMeters, -maxZ, maxZ);
     onMove(fixture.id, Math.round(x * 1000), Math.round(z * 1000));
   }
 
@@ -534,9 +564,12 @@ function FixtureObject({
     if (pointerId.current !== null) target?.releasePointerCapture?.(pointerId.current);
     dragging.current = false;
     pointerId.current = null;
+    if (controls) controls.enabled = true;
+    onDragging(false);
   }
 
   const fallback = <PrimitiveFixture fixture={fixture} />;
+  const localFixture = fixture.source === "photo" ? <FixtureBox fixture={fixture} /> : fallback;
 
   return (
     <group
@@ -558,7 +591,7 @@ function FixtureObject({
           </Suspense>
         </ModelErrorBoundary>
       ) : (
-        fallback
+        localFixture
       )}
       {selected && <SelectionOutline fixture={fixture} />}
     </group>
@@ -577,6 +610,7 @@ function LoadingModel({ fixture }: { fixture: Fixture }) {
 }
 
 function Stage(props: Props) {
+  const [isDragging, setIsDragging] = useState(false);
   return (
     <>
       <color attach="background" args={["#eee9e1"]} />
@@ -593,10 +627,11 @@ function Stage(props: Props) {
           snap={props.snap}
           onSelect={props.onSelect}
           onMove={props.onMove}
+          onDragging={setIsDragging}
         />
       ))}
       <ContactShadows position={[0, 0.01, 0]} opacity={0.22} scale={10} blur={2.5} far={4} />
-      <OrbitControls makeDefault enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI / 2.01} />
+      <OrbitControls makeDefault enabled={!isDragging} enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI / 2.01} />
       <CameraDirector booth={props.booth} view={props.view} />
     </>
   );

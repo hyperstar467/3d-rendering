@@ -1,16 +1,15 @@
 "use client";
 
-import { Component, Suspense, useMemo, type ReactNode } from "react";
+import { Component, Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Canvas } from "@react-three/fiber";
-import { Center, Html, OrbitControls, useGLTF } from "@react-three/drei";
-import * as THREE from "three";
+import { ContactShadows, Html, OrbitControls, useGLTF } from "@react-three/drei";
+import type { ModelDimensions } from "@/lib/modelTransform";
+import { prepareModelToDimensions } from "@/lib/modelTransform";
+import type { ModelRotation } from "@/lib/types";
 
-type Props = {
+type Props = ModelDimensions & {
   modelUrl: string;
-  width: number;
-  depth: number;
-  height: number;
-  rotation: { x: number; y: number; z: number };
+  rotation: ModelRotation;
 };
 
 class ReviewErrorBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { failed: boolean }> {
@@ -25,58 +24,43 @@ class ReviewErrorBoundary extends Component<{ children: ReactNode; fallback: Rea
   }
 }
 
-function ReviewedModel({ modelUrl, width, depth, height, rotation }: Props) {
-  const gltf = useGLTF(modelUrl);
-  const prepared = useMemo(() => {
-    const source = gltf.scene.clone(true);
-    source.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-      }
-    });
-
-    const oriented = new THREE.Group();
-    oriented.add(source);
-    oriented.rotation.set(
-      THREE.MathUtils.degToRad(rotation.x),
-      THREE.MathUtils.degToRad(rotation.y),
-      THREE.MathUtils.degToRad(rotation.z),
-    );
-    const box = new THREE.Box3().setFromObject(oriented);
-    const size = box.getSize(new THREE.Vector3());
-    const target = new THREE.Vector3(width / 1000, height / 1000, depth / 1000);
-    oriented.scale.set(
-      target.x / Math.max(size.x, 0.0001),
-      target.y / Math.max(size.y, 0.0001),
-      target.z / Math.max(size.z, 0.0001),
-    );
-    return oriented;
-  }, [depth, gltf.scene, height, rotation.x, rotation.y, rotation.z, width]);
-
-  return (
-    <Center bottom>
-      <primitive object={prepared} />
-    </Center>
+function ReviewedModel({ onMeasured, ...props }: Props & { onMeasured: (result: ModelDimensions & { matches: boolean }) => void }) {
+  const gltf = useGLTF(props.modelUrl);
+  const prepared = useMemo(
+    () => prepareModelToDimensions(gltf.scene, props, props.rotation),
+    [gltf.scene, props.depth, props.height, props.rotation.x, props.rotation.y, props.rotation.z, props.width],
   );
+
+  useEffect(() => {
+    onMeasured({ ...prepared.measured, matches: prepared.matchesTarget });
+  }, [onMeasured, prepared.matchesTarget, prepared.measured]);
+
+  return <primitive object={prepared.object} />;
 }
 
 export function ModelReview(props: Props) {
+  const [measurement, setMeasurement] = useState<(ModelDimensions & { matches: boolean }) | null>(null);
+  const max = Math.max(props.width, props.depth, props.height) / 1000;
   return (
     <div className="model-review-canvas">
-      <Canvas shadows="basic" camera={{ position: [2.7, 2.1, 3.2], fov: 38, near: 0.01, far: 100 }} dpr={[1, 2]}>
+      <Canvas shadows="basic" camera={{ position: [max * 1.7, max * 1.25, max * 1.9], fov: 38, near: 0.01, far: 100 }} dpr={[1.5, 2.5]}>
         <color attach="background" args={["#eee9e1"]} />
         <ambientLight intensity={1.4} />
         <directionalLight position={[3, 5, 4]} intensity={2.2} castShadow />
-        <ReviewErrorBoundary key={props.modelUrl} fallback={<Html center><div className="model-loading model-error">GLB 파일을 표시할 수 없습니다. 다른 파일을 선택해 주세요.</div></Html>}>
+        <ReviewErrorBoundary key={props.modelUrl} fallback={<Html center><div className="model-loading model-error">GLB 경계 크기를 측정할 수 없습니다.</div></Html>}>
           <Suspense fallback={<Html center><div className="model-loading">3D 모델을 준비하는 중…</div></Html>}>
-            <ReviewedModel {...props} />
+            <ReviewedModel {...props} onMeasured={setMeasurement} />
           </Suspense>
         </ReviewErrorBoundary>
-        <gridHelper args={[5, 10, "#b9ad9d", "#d7cec1"]} position={[0, -0.002, 0]} />
-        <OrbitControls makeDefault autoRotate autoRotateSpeed={0.7} enableDamping minDistance={1.5} maxDistance={8} />
+        <ContactShadows position={[0, 0.002, 0]} opacity={0.2} scale={Math.max(3, max * 3)} blur={2} far={max * 2} />
+        <OrbitControls makeDefault enableDamping minDistance={Math.max(0.5, max * 0.7)} maxDistance={Math.max(5, max * 8)} target={[0, props.height / 2000, 0]} />
       </Canvas>
-      <div className="review-orbit-hint">드래그해서 회전 · 휠로 확대</div>
+      <div className={`measurement-badge ${measurement?.matches ? "matches" : ""}`}>
+        {measurement
+          ? `${Math.round(measurement.width)} × ${Math.round(measurement.depth)} × ${Math.round(measurement.height)} mm · ${measurement.matches ? "실측 일치" : "불일치"}`
+          : "BoundingBox 측정 중…"}
+      </div>
+      <div className="review-orbit-hint">Orientation → Scale 분리 검수 · 드래그 회전</div>
     </div>
   );
 }
