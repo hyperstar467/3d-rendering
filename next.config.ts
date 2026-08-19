@@ -5,6 +5,7 @@ const distDir = process.env.NEXT_DIST_DIR;
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  allowedDevOrigins: ["127.0.0.1"],
   ...(distDir ? { distDir } : {}),
   ...(isGitHubPages
     ? {
