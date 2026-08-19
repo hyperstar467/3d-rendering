@@ -1,0 +1,38 @@
+# dependencies
+/node_modules
+/.pnpm-store/
+/.pnp
+.pnp.*
+
+# next.js
+/.next/
+/.next-build/
+/out/
+
+# production
+/build
+
+# local files
+.DS_Store
+*.pem
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+/test-results/
+/playwright-report/
+/:memory:.ses
+# Previous local prototype environment is kept off-repository and never executed.
+/local_ai/
+
+# environment variables
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
